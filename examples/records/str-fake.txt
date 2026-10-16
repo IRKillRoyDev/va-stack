@@ -1,0 +1,6 @@
+=== PAGE 1 ===
+FICTIONAL TEST RECORD - Service Treatment Record
+Patient: Pat Example (fictional)  Service: 2001-06-01 to 2005-05-31
+=== PAGE 2 ===
+2003-03-14 Sick call: Member injured lower back lifting equipment during training.
+Assessment: acute lumbar strain.
