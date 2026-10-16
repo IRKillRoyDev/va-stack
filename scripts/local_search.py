@@ -51,14 +51,6 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"),
     ),
     (
-        "DOB",
-        re.compile(
-            r"(?P<lbl>\b(?:D\.?\s?O\.?\s?B|date of birth|birth ?date|birth"
-            r"|born(?:\s+on)?)(?![A-Za-z])\.?[\s:=#-]*)" + DATE_VALUE,
-            re.IGNORECASE,
-        ),
-    ),
-    (
         "DOD_ID",
         re.compile(
             r"(?P<lbl>\b(?:DoD ID|EDIPI|DOD ID number)\b[\s:#No.-]*)\d{10}\b"
@@ -77,19 +69,22 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
         "SSN",
         re.compile(
-            r"(?<!\d)\d{3}[\s./_,:-]{1,3}\d{2}[\s./_,:-]{1,3}\d{4}(?!\d)"
+            r"(?<!\d)\d{3}[\s./_,:-]{1,4}\d{2}[\s./_,:-]{1,4}\d{4}(?!\d)"
             r"|(?<!\d)\d{9}(?!\d)"
         ),
     ),
     (
+        # Labeled phones, or full 10-digit forms. Unlabeled 7-digit numbers
+        # and unlabeled space-separated numbers are not treated as phones.
         "PHONE",
         re.compile(
-            r"\+\d{1,3}(?:[\s.-]?\d{1,4}){2,5}(?!\d)"
-            r"|(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|(?<![\d-])\d{3}[.-])\d{3}[.-]\d{4}(?!\d)"
+            r"(?:\+\d{1,3}(?:[\s.-]?\d{1,4}){2,5}(?!\d)"
             r"|(?:\+?1[\s.-]?)?\(\d{3}\)\s?\d{3}[\s.-]\d{4}(?!\d)"
-            r"|(?P<lbl>\b(?:tel|phone|ph)\b\.?[\s:#]*)"
-            r"(?:\(?\d{3}\)?[\s.-])?\d{3}[\s.-]\d{4}(?!\d)"
-            r"|(?<![\d.-])\d{3}[.-]\d{4}(?![\d.-])",
+            r"|(?<![\d-])(?:\+?1[.-])?\d{3}[.-]\d{3}[.-]\d{4}(?![\d-])"
+            r"|(?P<lbl>(?<![A-Za-z])(?:tel|phone|ph|call|cell|mobile|fax)"
+            r"(?![A-Za-z])\.?[\s:#]*)"
+            r"(?:\(?\d{3}\)?[\s.-]{1,2})?\d{3}[\s.-]\d{4}(?!\d))"
+            r"(?:\s*(?:x|ext\.?)\s*\d{1,5}(?!\d))?",
             re.IGNORECASE,
         ),
     ),
@@ -114,10 +109,49 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         re.compile(
             r"(?P<lbl>(?P<c>,[ \t]*)|\b[A-Z][a-z]+[ \t]+)"
             rf"(?(c)(?i:{STATES})|(?:{STATES}))\b[ \t]*,?[ \t]*"
-            r"\d{5}(?:-\d{4})?(?!\d)"
+            r"\d{5}(?:-\d{4})?(?!\d)(?=[ \t]*(?:$|[^\w\s]))",
+            re.MULTILINE,
         ),
     ),
 ]
+
+# Birth labels. (?<![A-Za-z]) instead of \b so "_" counts as a boundary.
+BIRTH_LABEL = re.compile(
+    r"(?<![A-Za-z])(?:d[.\- ]{0,2}o[.\- ]{0,2}b|birth(?:day|date)?|born"
+    r"|b\.(?=\s*[(\[]?\d))(?![A-Za-z])",
+    re.IGNORECASE,
+)
+# Any date-like value, including space-separated numeric dates.
+DATE_LIKE = re.compile(
+    r"(?<!\d)(?:" + DATE_VALUE + r"|\d{1,2}\s\d{1,2}\s\d{2,4}(?!\d)"
+    r"|\d{4}\s\d{1,2}\s\d{1,2}(?!\d))",
+    re.IGNORECASE,
+)
+BIRTH_WINDOW = 25  # a date must start within this many characters of a label
+
+
+def _redact_birth_dates(text: str) -> tuple[str, int]:
+    """Redact every date-like value that starts shortly after a birth label.
+
+    When to use: first step of redact(), in every mode (keep_dates or not),
+    so labeled dates of birth of any age and format are removed.
+    """
+    out: list[str] = []
+    pos = 0
+    count = 0
+    for label in BIRTH_LABEL.finditer(text):
+        if label.start() < pos:
+            continue
+        date = DATE_LIKE.search(text, label.end(), label.end() + BIRTH_WINDOW + 40)
+        if date is None or date.start() - label.end() > BIRTH_WINDOW:
+            continue
+        out.append(text[slice(pos, date.start())])
+        out.append("[REDACTED-DOB]" + "\n" * date.group(0).count("\n"))
+        pos = date.end()
+        count += 1
+    out.append(text[pos:])
+    return "".join(out), count
+
 
 # Characters that hide or disguise separators inside identifiers.
 INVISIBLE = dict.fromkeys(map(ord, "\u00ad\u200b\u200c\u200d\u2060\ufeff"))
@@ -195,6 +229,9 @@ def redact(text: str, keep_dates: bool = False) -> tuple[str, dict[str, int]]:
     text = "".join(
         ch for ch in text if unicodedata.category(ch) not in STRIP_CATEGORIES
     )
+    text, n = _redact_birth_dates(text)
+    if n:
+        counts["DOB"] = n
     for kind, pattern in REDACTIONS:
         text, n = pattern.subn(_tag(kind), text)
         if n:
@@ -382,7 +419,9 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         description="Offline, in-memory search of a local records folder. "
-        "Prints redacted JSON snippets; writes nothing to disk."
+        "Prints JSON snippets after pattern-based redaction, which can miss "
+        "identifiers and can over-redact; review every snippet. Writes nothing "
+        "to disk."
     )
     parser.add_argument("folder", type=Path, help="local records folder")
     parser.add_argument(
