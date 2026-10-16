@@ -5,7 +5,7 @@ description: Fetch the current text of 38 CFR Parts 3, 4, 14 and 20 from the off
 
 # cfr-fetch
 
-Parts fetched: **3** (adjudication), **4** (rating schedule), **14** (representation and accreditation, e.g. §14.629), **20** (Board of Veterans' Appeals rules of practice).
+Parts fetched: **3** (adjudication), **4** (rating schedule), **14** (legal services, General Counsel, and accreditation of representatives, e.g. §14.629), **20** (Board of Veterans' Appeals rules of practice).
 
 ## Verified endpoints
 
