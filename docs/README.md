@@ -13,7 +13,8 @@ The [va-claims agent](../agents/va-claims.md) runs:
 5. condition-map: diagnostic code (Part 4) and basis (Part 3: direct §3.303, presumptive §3.307/§3.309, secondary §3.310, aggravation §3.306), shown vs missing
 6. claim-citations: table of condition, basis, CFR, DC, evidence (file p.# "quote"), gaps; rows without both cite types are dropped
 7. related-gaps: related/secondary conditions labeled "needs more documentation"
-8. claim-submission: the chosen track's guidance, each step citing a live VA.gov URL or CFR section
+8. proposed-issues: full cited report plus form-mapped proposed issues for the track's verified form (VA Form 21-526EZ Section V for BDD, initial and increase; 20-0995, 20-0996, 10182, 21P-534EZ, 21-0966 for the others), unofficial Part 4 estimates with gap analysis and the §4.25 combined estimate, each with the unofficial-estimate notice
+9. claim-submission: the chosen track's guidance, each step citing a live VA.gov URL or CFR section
 
 ## The private local records folder
 

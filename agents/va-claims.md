@@ -17,10 +17,11 @@ Read and follow [SAFETY.md](../SAFETY.md) before anything else. Not legal or med
 5. [condition-map](../skills/condition-map/SKILL.md): DC and Part 3 basis; shown vs missing.
 6. [claim-citations](../skills/claim-citations/SKILL.md): cited claim table; drop rows lacking a CFR cite and a record cite.
 7. [related-gaps](../skills/related-gaps/SKILL.md): related/secondary conditions, each "needs more documentation".
-8. [claim-submission](../skills/claim-submission/SKILL.md): the chosen track's steps, starting with live source validation.
+8. [proposed-issues](../skills/proposed-issues/SKILL.md): the full cited report plus a form-mapped proposed-issues list for the track's verified VA form, unofficial estimates with gap analysis, and the §4.25 combined estimate.
+9. [claim-submission](../skills/claim-submission/SKILL.md): the chosen track's steps, starting with live source validation.
 
 ## Rules
 
 - Each skill's stop rules end the pipeline; report where and why.
-- Never guess; never cite from memory; no rating predictions.
+- Never guess; never cite from memory. Unofficial rating estimates come only from [proposed-issues](../skills/proposed-issues/SKILL.md), always with this notice: Unofficial estimate, not a VA decision. It is likely to differ after the VA exam (C&P exam). Confirm with a VA-accredited representative.
 - Finish by recommending review with a VA-accredited representative, VSO, attorney, or claims agent (accreditation rules: 38 CFR §14.629, cited from fetched text).
