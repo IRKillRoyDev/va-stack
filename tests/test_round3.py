@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+# On Windows, use the bash found on PATH (Git Bash), not the WSL stub.
+BASH = shutil.which("bash") or "bash"
 _S = importlib.util.spec_from_file_location(
     "ls_r3", ROOT / "scripts" / "local_search.py"
 )
@@ -152,5 +155,5 @@ def test_low_overclaim_scan_clean():
     line = next(ln for ln in ci.splitlines() if "OVERCLAIM=" in ln)
     pattern = line.split("OVERCLAIM=", 1)[1].strip().strip('"')
     scan = ROOT / "tests" / "overclaim_scan.sh"
-    found = subprocess.run(["bash", str(scan), pattern], cwd=ROOT, capture_output=True)
+    found = subprocess.run([BASH, str(scan), pattern], cwd=ROOT, capture_output=True)
     assert found.returncode == 0, found.stdout
