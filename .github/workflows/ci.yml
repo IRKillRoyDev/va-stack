@@ -75,3 +75,66 @@ jobs:
           python -c "import tkinter; print('tk', tkinter.TkVersion)"
           xvfb-run -a pytest -v -rs tests/test_gui_headless.py | tee gui.txt
           grep -q "2 passed" gui.txt
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install as in README (macOS)
+        shell: bash
+        run: |
+          python3 --version
+          python3 -m venv .venv
+          source .venv/bin/activate
+          python -m pip install -r requirements.txt
+          python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
+          python -m pip install -r requirements-dev.txt
+      - name: Vault opens encrypted (SQLCipher, not plain sqlite3)
+        shell: bash
+        run: |
+          source .venv/bin/activate
+          python -m pip show sqlcipher3
+          python -m pytest -v -s -rs tests/test_encryption.py
+      - name: Pytest (window tests skip without a display)
+        shell: bash
+        run: |
+          source .venv/bin/activate
+          python -m pytest -q -rs
+  windows:
+    runs-on: windows-latest
+    env:
+      PY_PYTHON: "3.12"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install as in README (Windows PowerShell)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          py --version
+          py -m venv .venv
+          .venv\Scripts\Activate.ps1
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Vault opens encrypted (SQLCipher, not plain sqlite3)
+        shell: pwsh
+        run: |
+          .venv\Scripts\Activate.ps1
+          python -m pip show sqlcipher3
+          python -m pytest -v -s -rs tests/test_encryption.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Pytest (window tests skip without a display)
+        shell: pwsh
+        run: |
+          .venv\Scripts\Activate.ps1
+          python -m pytest -q -rs
+          if ($LASTEXITCODE -ne 0) { exit 1 }

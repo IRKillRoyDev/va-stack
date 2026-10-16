@@ -4,6 +4,232 @@ Skills for a bot that helps veterans **prepare** (not file) VA disability claims
 
 Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 
+## Install
+
+You need about 10 minutes and an internet connection. Each step has one command: copy it, paste it into the window, and press Enter. Pick your computer below.
+
+### macOS
+
+Open the **Terminal** app (press Cmd+Space, type `Terminal`, press Enter).
+
+1. Check that Python 3.10 or newer is installed. You can be in any folder.
+
+   ```bash
+   python3 --version
+   ```
+
+   Success looks like `Python 3.12.7` (3.10 or newer is fine; 3.12 is the version we test). If you see "command not found", install Python from <https://www.python.org/downloads/macos/> and open a new Terminal window.
+
+2. Download va-stack into your home folder.
+
+   ```bash
+   cd ~ && git clone https://github.com/IRKillRoyDev/va-stack.git
+   ```
+
+   Success looks like `Cloning into 'va-stack'...` and then the prompt again. If macOS asks to install the "command line developer tools", click Install, wait, and run this step again.
+
+3. Go into the va-stack folder. Every step after this one runs in this folder.
+
+   ```bash
+   cd ~/va-stack
+   ```
+
+   Success looks like no message at all; the prompt now ends in `va-stack`.
+
+4. Make a private Python space for va-stack (a "virtual environment").
+
+   ```bash
+   python3 -m venv .venv
+   ```
+
+   Success looks like no message at all.
+
+5. Turn it on. Do this again each time you open a new Terminal window.
+
+   ```bash
+   source .venv/bin/activate
+   ```
+
+   Success looks like `(.venv)` at the start of the prompt.
+
+6. Install what va-stack needs, including the encrypted database driver.
+
+   ```bash
+   python -m pip install -r requirements.txt
+   ```
+
+   Success looks like a last line starting with `Successfully installed`.
+
+7. Check that the encryption works.
+
+   ```bash
+   python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
+   ```
+
+   Success looks like a version such as `4.19.0 community`. If it prints nothing or an error, stop: the vault will refuse to run without encryption.
+
+**If this fails (macOS):**
+- `pip: command not found` or `pip3: command not found`: always use `python -m pip` (inside `(.venv)`) or `python3 -m pip` (outside it) instead of `pip`, exactly as in step 6.
+- `Could not find a version that satisfies the requirement sqlcipher3-binary`: your copy is old. In the va-stack folder run `git pull`, then repeat step 6.
+- `No module named venv` or `python3` opens an installer: install Python from python.org (not the Xcode copy), open a new Terminal window, and start again at step 3.
+- `(.venv)` is gone: you opened a new window. Run step 3 and step 5 again.
+
+### Windows
+
+Open **PowerShell** (press the Windows key, type `PowerShell`, press Enter).
+
+1. Check that Python 3.10 or newer is installed. You can be in any folder.
+
+   ```powershell
+   py --version
+   ```
+
+   Success looks like `Python 3.12.7` (3.10 or newer is fine; 3.12 is the version we test). If you see "py is not recognized", install Python from <https://www.python.org/downloads/windows/> (keep "py launcher" ticked) and open a new PowerShell window.
+
+2. Download va-stack into your home folder.
+
+   ```powershell
+   cd ~; git clone https://github.com/IRKillRoyDev/va-stack.git
+   ```
+
+   Success looks like `Cloning into 'va-stack'...` and then the prompt again. If "git is not recognized", install Git from <https://git-scm.com/download/win>, open a new PowerShell window, and run this step again.
+
+3. Go into the va-stack folder. Every step after this one runs in this folder.
+
+   ```powershell
+   cd ~\va-stack
+   ```
+
+   Success looks like the prompt now ending in `va-stack>`.
+
+4. Make a private Python space for va-stack (a "virtual environment").
+
+   ```powershell
+   py -m venv .venv
+   ```
+
+   Success looks like no message at all.
+
+5. Turn it on. Do this again each time you open a new PowerShell window.
+
+   ```powershell
+   .venv\Scripts\Activate.ps1
+   ```
+
+   Success looks like `(.venv)` at the start of the prompt.
+
+6. Install what va-stack needs, including the encrypted database driver.
+
+   ```powershell
+   python -m pip install -r requirements.txt
+   ```
+
+   Success looks like a last line starting with `Successfully installed`.
+
+7. Check that the encryption works.
+
+   ```powershell
+   python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
+   ```
+
+   Success looks like a version such as `4.19.0 community`. If it prints nothing or an error, stop: the vault will refuse to run without encryption.
+
+**If this fails (Windows):**
+- Step 5 says "running scripts is disabled on this system": run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, answer `Y`, then repeat step 5.
+- `pip is not recognized`: always use `python -m pip` (inside `(.venv)`) or `py -m pip` (outside it) instead of `pip`, exactly as in step 6.
+- `Could not find a version that satisfies the requirement`: your copy is old. In the va-stack folder run `git pull`, then repeat step 6.
+- `(.venv)` is gone: you opened a new window. Run step 3 and step 5 again.
+
+### Linux
+
+Open a terminal window.
+
+1. Check that Python 3.10 or newer is installed. You can be in any folder.
+
+   ```bash
+   python3 --version
+   ```
+
+   Success looks like `Python 3.12.7` (3.10 or newer is fine; 3.12 is the version we test).
+
+2. Download va-stack into your home folder.
+
+   ```bash
+   cd ~ && git clone https://github.com/IRKillRoyDev/va-stack.git
+   ```
+
+   Success looks like `Cloning into 'va-stack'...` and then the prompt again.
+
+3. Go into the va-stack folder. Every step after this one runs in this folder.
+
+   ```bash
+   cd ~/va-stack
+   ```
+
+   Success looks like no message at all.
+
+4. Make a private Python space for va-stack (a "virtual environment").
+
+   ```bash
+   python3 -m venv .venv
+   ```
+
+   Success looks like no message at all.
+
+5. Turn it on. Do this again each time you open a new terminal window.
+
+   ```bash
+   source .venv/bin/activate
+   ```
+
+   Success looks like `(.venv)` at the start of the prompt.
+
+6. Install what va-stack needs, including the encrypted database driver.
+
+   ```bash
+   python -m pip install -r requirements.txt
+   ```
+
+   Success looks like a last line starting with `Successfully installed`.
+
+7. Check that the encryption works.
+
+   ```bash
+   python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
+   ```
+
+   Success looks like a version such as `4.12.0 community`. If it prints nothing or an error, stop: the vault will refuse to run without encryption.
+
+**If this fails (Linux):**
+- `No module named venv` or `ensurepip is not available` (Debian, Ubuntu): run `sudo apt install python3-venv`, then repeat step 4.
+- `pip: command not found`: use `python -m pip` (inside `(.venv)`) or `python3 -m pip` (outside it), exactly as in step 6.
+- The review window does not open: run `sudo apt install python3-tk`, or use the text walk-through with `--cli` (below).
+- `(.venv)` is gone: you opened a new window. Run step 3 and step 5 again.
+
+### Start the review
+
+Stay in the va-stack folder with `(.venv)` showing. These commands are the same on macOS, Windows and Linux. Replace `records.db` with the name you want for your vault, `"/path/to/records"` with the folder that holds your record files, `issues.json` with your proposed-issues input file, and `my-bot` with your bot id.
+
+1. Create the encrypted vault (you choose its password; it is asked for on screen).
+
+   ```bash
+   python scripts/records_vault.py init records.db
+   ```
+
+2. Add your records to the vault.
+
+   ```bash
+   python scripts/records_vault.py ingest records.db "/path/to/records" --bot-id my-bot
+   ```
+
+3. Start the review. A window opens; on a computer without a screen, add `--cli` for the text walk-through.
+
+   ```bash
+   python scripts/proposed_issues.py records.db issues.json --bot-id my-bot --review
+   ```
+
+   Success looks like the "1 of N" review screen. Answer `y` (Yes) or `n` (No) for each row, then type back the short phrase shown on the summary and choose Confirm all. Nothing is saved before Confirm all.
+
 ## Pipeline
 
 | # | Skill | Purpose |
@@ -22,7 +248,31 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 
 `plugin.json` and `.cursor-plugin/plugin.json` describe the plugin (skills in `./skills/`, agents in `./agents/`). The [va-claims agent](agents/va-claims.md) runs the pipeline. More in [docs/README.md](docs/README.md).
 
-## CI
+## Local search script
+
+```
+python -m pip install -r requirements.txt
+python3 scripts/local_search.py "/path/to/records" -t "tinnitus" -t "lumbar" --dry-run
+python3 scripts/local_search.py "/path/to/records" -t "tinnitus" --max-hits-per-term 20 --max-total 100 --context 80
+python3 scripts/local_search.py "/path/to/records" -t "separation" --keep-dates  # keep exact old dates
+```
+
+Runs on the user's own computer, makes no network calls, and writes nothing to disk. Output is redacted JSON for the user to review before sharing.
+
+## Encrypted vault (optional)
+
+```
+python -m pip install -r requirements.txt
+python3 scripts/records_vault.py init records.db
+python3 scripts/records_vault.py ingest records.db "/path/to/records" --bot-id <id>
+python3 scripts/records_vault.py search records.db --bot-id <id> -t "tinnitus"
+python3 scripts/records_vault.py verify records.db --bot-id <id>
+python3 scripts/vault_ui.py records.db --bot-id <id>
+```
+
+Each command shows the consent-to-share notice, then prompts for the password locally. `tests/test_vault.py` covers wrong password, tampered or deleted log entries, no consent, consent every session, missing bot id, no snippet text in the log, key zeroized after close, and no network use.
+
+## Development and tests (CI)
 
 `.github/workflows/ci.yml` runs on every push, pull request, and manual dispatch. Its steps:
 
@@ -37,26 +287,5 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 9. **Estimate notice present:** SAFETY.md, the proposed-issues skill, and the agent each contain the unofficial-estimate notice, and the skill names the insufficient-evidence output.
 10. **Lint and tests** (job `python`): `pip install -r requirements-dev.txt` (pinned pypdf, pytest, ruff, flake8), then `ruff check .`, `ruff format --check .`, `flake8 .`, and `pytest -q`. `tests/test_local_search.py` checks redaction of every identifier kind, the per-term and total caps, `--dry-run` counts-only output, in-memory PDF extraction, and that no socket is opened (socket creation is patched to raise). `tests/test_hardening.py` holds the red-team regression tests (redaction before windowing, SSN separator and invisible-character variants, old dates, addresses, phones, redacted terms and file names, line-split identifiers, and the SAFETY/CI wording checks).
 
-## Local search script
 
-```
-pip install -r requirements.txt
-python3 scripts/local_search.py "/path/to/records" -t "tinnitus" -t "lumbar" --dry-run
-python3 scripts/local_search.py "/path/to/records" -t "tinnitus" --max-hits-per-term 20 --max-total 100 --context 80
-python3 scripts/local_search.py "/path/to/records" -t "separation" --keep-dates  # keep exact old dates
-```
-
-Runs on the user's own computer, makes no network calls, and writes nothing to disk. Output is redacted JSON for the user to review before sharing.
-
-## Encrypted vault (optional)
-
-```
-pip install -r requirements.txt
-python3 scripts/records_vault.py init records.db
-python3 scripts/records_vault.py ingest records.db "/path/to/records" --bot-id <id>
-python3 scripts/records_vault.py search records.db --bot-id <id> -t "tinnitus"
-python3 scripts/records_vault.py verify records.db --bot-id <id>
-python3 scripts/vault_ui.py records.db --bot-id <id>
-```
-
-Each command shows the consent-to-share notice, then prompts for the password locally. `tests/test_vault.py` covers wrong password, tampered or deleted log entries, no consent, consent every session, missing bot id, no snippet text in the log, key zeroized after close, and no network use.
+11. **Install and test on macOS and Windows** (jobs `macos` and `windows`, Python 3.12): the same commands as the Install section above (`python3 -m venv .venv` and `source .venv/bin/activate` on macOS; `py -m venv .venv` and `.venv\Scripts\Activate.ps1` in PowerShell on Windows; then `python -m pip install -r requirements.txt` and the encryption check), then `python -m pip install -r requirements-dev.txt`, `python -m pytest -v -s tests/test_encryption.py` (the vault opens encrypted: PRAGMA cipher_version is non-empty and plain sqlite3 cannot read the file) and `python -m pytest -q -rs`. The window tests are skipped there because those runners set no DISPLAY; the `gui-headless` job runs them under Xvfb on Linux.
