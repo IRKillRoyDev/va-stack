@@ -55,7 +55,7 @@ def no_network(monkeypatch):
 @pytest.fixture
 def vault(tmp_path):
     db = tmp_path / "r.db"
-    rv.create_vault(db, bytearray(b"pw fake"), kdf_params=FAST)
+    rv.create_vault(db, bytearray(b"pw fake"), kdf_params=FAST, insecure_test_kdf=True)
     gate = rv.ConsentGate()
     gate.acknowledge()
     v = rv.Vault.open(db, bytearray(b"pw fake"), gate)

@@ -10,10 +10,21 @@ skip=(
   tests/test_hardening.py
   tests/test_round3.py
   tests/test_round4.py
+  tests/test_round5.py
   tests/test_vault.py
 )
 mapfile -t files < <(git ls-files | grep -Fxv -f <(printf '%s\n' "${skip[@]}"))
-if grep -niIE -- "$pattern" "${files[@]}"; then
+# Normalize dashes and runs of spaces first so "zero–retention" or
+# "records stay  local" cannot slip past the phrase list.
+found=0
+for f in "${files[@]}"; do
+  grep -qI . "$f" 2>/dev/null || continue
+  if sed -e 's/[‐‑‒–—―−]/-/g' -e 's/[[:space:]][[:space:]]*/ /g' "$f" \
+      | grep -niIE -- "$pattern" | sed "s|^|$f:|"; then
+    found=1
+  fi
+done
+if [ "$found" = 1 ]; then
   echo "privacy overclaim found"
   exit 1
 fi
