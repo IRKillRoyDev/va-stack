@@ -25,8 +25,10 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 
 1. `actions/checkout@v4`
 2. `actions/setup-python@v5` (Python 3.12)
-3. **Check every claim row has a CFR cite and a record cite:** `python3 tests/check_citations.py`. Validates `tests/fixtures/claims-fake.json` against the fictional `tests/fake-records/` (quotes must appear on the cited page; related rows must be "needs more documentation") and confirms `claims-bad.json` is rejected.
+3. **Check every claim row has a CFR cite and a record cite:** `python3 tests/check_citations.py`. Validates `tests/fixtures/claims-fake.json` against the fictional `tests/fake-records/`: each CFR cite must be a section in the pinned eCFR list `tests/fixtures/ecfr-sections-2026-10-14.json` (Parts 3, 4, 14, 20), each quote must appear on the cited page, and related rows must be "needs more documentation". Confirms `claims-bad.json` and `claims-bad-fake-section.json` (a made-up §3.999) are rejected.
 4. **Validate plugin.json files parse and match:** `python3 tests/check_plugin_json.py`
-5. **Check claim-submission track step lists:** `python3 tests/check_submission_tracks.py`. Tracks A1, A2, B1, B2, C present; step 1 validates sources; every step cites a VA.gov URL, a govinfo 10 U.S.C. URL, DoDI 1332.18, or a 38 CFR section; no step submits, signs, or contacts VA; `submission-bad.json` is rejected.
+5. **Check claim-submission track step lists:** `python3 tests/check_submission_tracks.py`. Tracks A1, A2, B1, B2, C present; step 1 validates sources; every step cites a VA.gov URL, a govinfo 10 U.S.C. URL, DoDI 1332.18, or a real 38 CFR section; no step has the bot submit, file, e-file, sign, send, transmit, upload, fax, mail, call, or contact VA. Every step of `submission-bad.json` and `submission-bad-phrasings.json` must be rejected.
 6. **Skill frontmatter present:** every `skills/*/SKILL.md` starts with frontmatter containing `name:` and `description:`.
 7. **claim-submission guardrails present:** the skill contains "never submits", "Step 0: Ask which track", "Track B2", "Track C", "Track A2", "PEBLO", "§20.202", and "§3.155".
+8. **SAFETY.md disclaimer present:** SAFETY.md exists and contains "Not legal or medical advice", "No filing", "VA-accredited", the AI-service processing note, and the Veterans Crisis Line; no Markdown file makes a privacy, compliance, or retention overclaim (phrases listed in `ci.yml`).
+9. **No rating predictions rule present:** condition-map, claim-citations, and claim-submission each keep their no-prediction rule.
