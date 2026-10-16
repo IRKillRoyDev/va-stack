@@ -15,6 +15,18 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 | 5 | [related-gaps](skills/related-gaps/SKILL.md) | List related/secondary conditions as "needs more documentation" |
 | 6 | [claim-submission](skills/claim-submission/SKILL.md) | Guide (never perform) the submission process after validating VA.gov, forms, and 38 CFR sources live |
 
-## Tests
+## Plugin
 
-`python3 tests/check_citations.py` validates the claim table against the fictional record set in `tests/fake-records/`. CI runs it on every push.
+`plugin.json` and `.cursor-plugin/plugin.json` describe the plugin (skills in `./skills/`, agents in `./agents/`). The [va-claims agent](agents/va-claims.md) runs the pipeline. More in [docs/README.md](docs/README.md).
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push, pull request, and manual dispatch. Its steps:
+
+1. `actions/checkout@v4`
+2. `actions/setup-python@v5` (Python 3.12)
+3. **Check every claim row has a CFR cite and a record cite:** `python3 tests/check_citations.py`. Validates `tests/fixtures/claims-fake.json` against the fictional `tests/fake-records/` (quotes must appear on the cited page; related rows must be "needs more documentation") and confirms `claims-bad.json` is rejected.
+4. **Validate plugin.json files parse and match:** `python3 tests/check_plugin_json.py`
+5. **Check claim-submission track step lists:** `python3 tests/check_submission_tracks.py`. Tracks A, B1, B2 present; step 1 validates sources; every step cites a VA.gov URL or 38 CFR section; no step submits, signs, or contacts VA; `submission-bad.json` is rejected.
+6. **Skill frontmatter present:** every `skills/*/SKILL.md` starts with frontmatter containing `name:` and `description:`.
+7. **claim-submission guardrails present:** the skill contains "never submits", "Step 0: Ask which track", "Track B2", and "§3.155".

@@ -13,6 +13,8 @@ jobs:
           python-version: "3.12"
       - name: Check every claim row has a CFR cite and a record cite
         run: python3 tests/check_citations.py
+      - name: Validate plugin.json files parse and match
+        run: python3 tests/check_plugin_json.py
       - name: Check claim-submission track step lists
         run: python3 tests/check_submission_tracks.py
       - name: Skill frontmatter present
