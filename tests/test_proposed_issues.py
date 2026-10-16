@@ -311,3 +311,15 @@ def test_skill_documents_every_form_and_date_procedure():
     for part in ("--keep-dates", "birth label", "every mode", "MM-YYYY", "confirmed"):
         assert part in skill
     assert pi.ESTIMATE_NOTICE in skill and pi.INSUFFICIENT in skill
+
+
+def test_old_no_rating_guardrail_removed():
+    old = re.compile(
+        r"no (?:rating |percentage |outcome or rating )?predictions"
+        r"|with a percentage|do not say which percentage",
+        re.IGNORECASE,
+    )
+    paths = [ROOT / "SAFETY.md", ROOT / "agents/va-claims.md", ROOT / "README.md"]
+    paths += sorted((ROOT / "skills").glob("*/SKILL.md"))
+    for path in paths:
+        assert not old.search(path.read_text()), path

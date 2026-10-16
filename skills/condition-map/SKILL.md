@@ -1,6 +1,6 @@
 ---
 name: condition-map
-description: Map each diagnosis from records-intake to its 38 CFR Part 4 diagnostic code and its Part 3 basis (direct, presumptive §3.307/§3.309, secondary §3.310, aggravation §3.306), stating what the records show versus what is missing. No rating predictions beyond quoting schedule criteria.
+description: Map each diagnosis from records-intake to its 38 CFR Part 4 diagnostic code and its Part 3 basis (direct, presumptive §3.307/§3.309, secondary §3.310, aggravation §3.306), stating what the records show versus what is missing. Any unofficial estimate comes only from proposed-issues, with its notice.
 ---
 
 # condition-map
