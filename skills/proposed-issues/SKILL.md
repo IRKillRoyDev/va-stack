@@ -52,6 +52,13 @@ Section V of VA Form 21-526EZ asks for the approximate date a disability began o
 - The estimate is the highest level that any documented factor meets ("at least one of"). If none of the factors the criteria need is documented, output exactly: `insufficient evidence to estimate`.
 - Each row shows: (a) evidence links `vault://<record_id>#page=N` with redacted quotes (the vault opens them after unlock and logs each open with the bot id; no file paths appear), (b) the Part 4 wording for the estimated level with section, DC and eCFR link, and (c) the gap analysis.
 
+## Evidence quotes (whole sentences only)
+
+- Every evidence quote must be one or more whole sentences from the cited record page, copied exactly from the start of the first sentence to the end of the last (differences in spacing and line breaks are ignored; letter case is not). Quote the whole line or sentence, for example `Examiner: it is less likely than not that tinnitus is related to military noise exposure.`, never the part after the negation.
+- Sentences end at a line break, or at `.`, `!` or `?` followed by a space. Common abbreviations (e.g., i.e., Dr., Mr., Mrs., Ms., vs., etc., approx., No.) and decimals such as 3.5 do not end a sentence.
+- As a backup, if a sentence that starts in lowercase (for example a wrapped line) is joined to the quoted one and holds a negation word outside the quote (not, never, no, cannot, n't, unlikely, less likely than not, denied, ruled out, negative, against, unrelated, and similar), the quote is refused.
+- Quotes shorter than 20 characters are refused unless they are a whole line. Empty quotes are refused.
+
 ## Gap analysis (next level)
 
 - For the next higher level, each factor is `met`, `not met`, or `not documented`, with its eCFR cite.

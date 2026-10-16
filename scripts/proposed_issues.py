@@ -28,6 +28,7 @@ import re
 import sys
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_DIR = ROOT / "skills" / "proposed-issues"
@@ -168,10 +169,30 @@ def load_ecfr() -> dict:
     return _json(ECFR_FIXTURE)
 
 
-URL_ALLOW = {
-    "ecfr": ("https://www.ecfr.gov/",),
-    "form": ("https://www.va.gov/", "https://www.vba.va.gov/"),
+URL_HOSTS = {
+    "ecfr": frozenset({"www.ecfr.gov"}),
+    "form": frozenset({"www.va.gov", "www.vba.va.gov"}),
 }
+
+
+def _url_ok(url, hosts: frozenset) -> bool:
+    """True only for https://<allowed host>/<path>, nothing else.
+
+    Parsed with urllib.parse.urlparse; the network location must equal an
+    allowed host exactly, so user info (user@host), ports, other letter case
+    and lookalike hosts (www.ecfr.gov.evil.example) are all refused, as are
+    backslashes, whitespace and protocol-relative paths ("//").
+    """
+    if not isinstance(url, str) or "\\" in url or any(c.isspace() for c in url):
+        return False
+    parts = urlparse(url)
+    return (
+        url.startswith("https://")
+        and parts.scheme == "https"
+        and parts.netloc in hosts
+        and parts.path.startswith("/")
+        and not parts.path.startswith("//")
+    )
 
 
 def check_urls(ecfr: dict, forms: dict) -> list[str]:
@@ -183,11 +204,11 @@ def check_urls(ecfr: dict, forms: dict) -> list[str]:
     problems = []
     for key, sec in ecfr["sections"].items():
         for field in ("url", "api_url"):
-            if not str(sec.get(field, "")).startswith(URL_ALLOW["ecfr"]):
+            if not _url_ok(sec.get(field), URL_HOSTS["ecfr"]):
                 problems.append(f"§{key} {field} is not on https://www.ecfr.gov/")
     for name, form in forms["forms"].items():
         for field in ("vagov_url", "pdf_url"):
-            if not str(form.get(field, "")).startswith(URL_ALLOW["form"]):
+            if not _url_ok(form.get(field), URL_HOSTS["form"]):
                 problems.append(f"{name} {field} is not on va.gov")
     return problems
 
@@ -470,11 +491,15 @@ def _check_decision_date(value: str) -> None:
 
 
 def _check_quote(vault, ev: dict, bot_id: str) -> None:
-    """Reject a quote that is empty, too short, or not on the cited page.
+    """Reject a quote unless it is one or more whole sentences on the page.
 
-    When to use: on every evidence item before it is cited. A quote must be
-    at least MIN_QUOTE characters or a whole line of the page, and must match
-    exactly (case included) on whole-word boundaries in the redacted text.
+    When to use: on every evidence item before it is cited. The quote,
+    whitespace-normalized, must equal a run of consecutive whole sentences
+    from split_sentences() (case included), so it cannot start or end inside
+    a sentence and silently drop "not", "e.g. ...", or a qualifier after it.
+    Backup: sentences are also grouped conservatively (a piece starting in
+    lowercase is joined to the one before, e.g. a wrapped line), and any
+    text in that group outside the quote must hold no NEGATION word.
     The check reads the page through the vault, so it is logged.
     """
     quote = " ".join(redact(ev.get("quote") or "")[0].split())
@@ -484,35 +509,84 @@ def _check_quote(vault, ev: dict, bot_id: str) -> None:
     lines = {" ".join(ln.split()) for ln in page.splitlines()}
     if len(quote) < MIN_QUOTE and quote not in lines:
         raise ValueError(f"quote too short to cite (< {MIN_QUOTE} chars)")
-    found = False
-    for m in _quote_matches(page, quote):
-        found = True
-        before = page[: m.start()]
-        if before.rstrip(" \t")[-1:] not in ("", "\n", ".", ";", ":"):
-            continue  # must start a sentence or clause
-        sentence = re.split(r"[.!?](?:\s|$)", " ".join(before.split()))[-1]
-        if NEGATION.search(sentence):
-            continue  # a negation earlier in the sentence would be dropped
-        return
-    if not found:
+    units = split_sentences(page)
+    group = _conservative_groups(units)
+    for start in range(len(units)):
+        for end in range(start + 1, len(units) + 1):
+            joined = " ".join(units[start:end])
+            if len(joined) > len(quote):
+                break
+            if joined != quote:
+                continue
+            ctx = {k for k in range(len(units)) if group[k] in group[start:end]}
+            outside = " ".join(units[k] for k in sorted(ctx) if not start <= k < end)
+            if NEGATION.search(outside):
+                raise ValueError(
+                    "quote would drop a negation in the same sentence: quote the"
+                    " whole sentence"
+                )
+            return
+    if not _quote_matches(page, quote):
         raise ValueError(f"quote not found on cited page {ev['page']}")
-    raise ValueError(
-        "quote must start a sentence or clause (after . ; : or a line start)"
-        " and must not drop a negation earlier in the sentence"
-    )
+    raise ValueError("quote must be one or more whole sentences, matched start to end")
+
+
+# Abbreviations whose period does not end a sentence (lowercase compare).
+ABBREVIATIONS = frozenset(
+    "e.g. i.e. dr. mr. mrs. ms. vs. etc. approx. no. st. jr. sr. pt. fig."
+    " al. cf. ca. dept. min. max. mt.".split()
+)
+_SENT_END = re.compile(r"[.!?]+[)\]\"']*(?=\s)")
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split text into whitespace-normalized sentences.
+
+    When to use: inside _check_quote(). A line break always ends a piece; a
+    period, "!" or "?" ends one only when followed by whitespace and the
+    word it ends is not an abbreviation (e.g., i.e., Dr., Mr., Mrs., Ms.,
+    vs., etc., approx., No., ...) or a single initial. Decimals such as 3.5
+    are never split because no whitespace follows the period.
+    """
+    out = []
+    for line in text.splitlines():
+        line = " ".join(line.split())
+        pos = 0
+        for m in _SENT_END.finditer(line):
+            word = line[slice(pos, m.end())].split()[-1].lower().strip("()[]\"'")
+            if word in ABBREVIATIONS or re.fullmatch(r"[a-z]\.", word):
+                continue
+            piece = line[slice(pos, m.end())].strip()
+            if piece:
+                out.append(piece)
+            pos = m.end()
+        rest = line[pos:].strip()
+        if rest:
+            out.append(rest)
+    return out
+
+
+def _conservative_groups(units: list[str]) -> list[int]:
+    """Group id per sentence; a sentence starting in lowercase joins the previous."""
+    groups, gid = [], 0
+    for k, unit in enumerate(units):
+        if k and not re.match(r"[a-z]", unit):
+            gid += 1
+        groups.append(gid)
+    return groups
 
 
 NEGATION = re.compile(
-    r"\b(?:not|never|no|unlikely|less likely than not|denied|denies|without)\b",
+    r"\b(?:not|never|no|unlikely|less likely than not|denied|denies|without"
+    r"|cannot|can't|ruled out|negative|against|unrelated)\b|n't\b",
     re.IGNORECASE,
 )
 
 
-def _quote_matches(page: str, quote: str):
-    """Yield exact matches of quote in page, any whitespace run matching any."""
+def _quote_matches(page: str, quote: str) -> bool:
+    """True if quote occurs anywhere in page, any whitespace run matching any."""
     words = [re.escape(w) for w in quote.split()]
-    pattern = r"(?<!\w)" + r"\s+".join(words) + r"(?!\w)"
-    return re.finditer(pattern, page)
+    return re.search(r"\s+".join(words), page) is not None
 
 
 def build_report(data: dict, vault, bot_id: str) -> dict:

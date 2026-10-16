@@ -57,10 +57,11 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         # Beneficiary Identifier (MBI) Format",
         # https://www.cms.gov/medicare/new-medicare-card/understanding-the-mbi.pdf,
         # checked 2026-10-16). CMS converts lowercase, so case is ignored.
+        # Separators: dash (any Unicode dash), space, or dot.
         "MBI",
         re.compile(
-            r"\b[1-9][AC-HJKMNP-RT-Y][AC-HJKMNP-RT-Y0-9]\d-?"
-            r"[AC-HJKMNP-RT-Y][AC-HJKMNP-RT-Y0-9]\d-?"
+            r"\b[1-9][AC-HJKMNP-RT-Y][AC-HJKMNP-RT-Y0-9]\d[-\u2010-\u2015\u2212 .]?"
+            r"[AC-HJKMNP-RT-Y][AC-HJKMNP-RT-Y0-9]\d[-\u2010-\u2015\u2212 .]?"
             r"[AC-HJKMNP-RT-Y]{2}\d{2}\b",
             re.IGNORECASE,
         ),
