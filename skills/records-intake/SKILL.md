@@ -5,11 +5,13 @@ description: Ingest a veteran's medical and service records only from a local pr
 
 # records-intake
 
+Requires: an approved snippet list from [local-search](../local-search/SKILL.md). Work from those snippets first.
+
 ## Steps
 
 1. Ask the user for the absolute path of a local private folder (their own folder for the record files). Accept records **only** from that folder. Refuse records pasted into chat, attached to issues, or located inside any repository; ask the user to save them to the private folder instead.
 2. Confirm the folder is not inside a git working tree and is not synced to a public location. If it is, stop and tell the user.
-3. List files (PDF, text, images). For PDFs use text extraction per page; for scans prefer local OCR. Do not upload or copy the files anywhere. Tell the user once, before reading: the files stay in their folder, but the text the bot reads is processed by the AI service it runs on; a fully offline setup needs a local model.
+3. Run [local-search](../local-search/SKILL.md) first: the user runs `scripts/local_search.py` on their computer, reviews the redacted snippets, and approves the list. Read only approved snippets. Read a whole page only when the user explicitly approves that page. For scans with no text layer, the user runs local OCR first. Do not upload or copy the files anywhere. Tell the user once, before reading: the files stay in their folder, but the text the bot reads is processed by the AI service it runs on; a fully offline setup needs a local model.
 4. Build an index, saved inside the same private folder as `_index.json`: one entry per file per page with `file`, `page`, `date` (document date as written; `unknown` if absent), and `doc_type` (STR, VA treatment, private treatment, DD-214, nexus letter, DBQ, other).
 5. For each page extract, with an exact quote for each item:
    - diagnoses (as written, plus ICD code if printed)
@@ -24,6 +26,7 @@ description: Ingest a veteran's medical and service records only from a local pr
 
 ## Stop rules
 
+- No approved local-search snippet list → stop. Whole pages only with explicit user approval per page.
 - No folder given, folder unreadable, or folder in a repo/public sync → stop.
 - Never write record files, extractions, or quotes to any location outside the user's folder (no repo, no gist), and quote in chat only what the user needs.
 - Never guess dates or diagnoses. Unknown stays unknown.

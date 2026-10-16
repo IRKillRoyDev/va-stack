@@ -7,6 +7,8 @@ description: Map each diagnosis from records-intake to its 38 CFR Part 4 diagnos
 
 Requires: a successful `cfr-fetch` session and `records-intake` extractions.
 
+Run [local-search](../local-search/SKILL.md) first for any extra evidence terms (diagnosis names, onset dates, nexus wording). Use only snippets the user approved; whole pages only with explicit user approval.
+
 ## Steps
 
 1. Take each diagnosis from `_extract.json`. One row per diagnosis.
