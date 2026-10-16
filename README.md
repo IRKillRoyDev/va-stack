@@ -8,14 +8,14 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 
 ### Recommended: let your bot install it
 
-Your assistant bot can install and start va-stack for you with one setup script. You approve each step before it runs. The script is safe to run again: it reuses what is already there.
+Your assistant bot can install and start va-stack for you with one setup script. You approve each step before it runs. You can run this again any time, to update or to fix a failed install. It won't delete or reset anything, and your saved records and answers stay as they are.
 
 - **What the bot runs**, from the va-stack folder after `git clone https://github.com/IRKillRoyDev/va-stack.git`:
   - macOS and Linux: `bash setup.sh`
   - Windows (PowerShell): `.\setup.ps1`
-- **What the script does:** creates or reuses the `.venv` folder inside va-stack, installs va-stack into it (`python -m pip install -e .`), checks the encryption, makes your vault folder if it is missing, makes the launchers runnable (macOS and Linux), and opens the VA Stack window. Add `--no-launch` (`-NoLaunch` on Windows) to set up without opening it.
+- **What the script does:** makes a private `.venv` folder inside va-stack (or uses the one from last time), installs va-stack and the programs it needs into that folder (`python -m pip install -e .`), checks that the encryption works, makes your vault folder if it is missing, lets the double-click start files run (macOS and Linux), and opens the VA Stack window. Add `--no-launch` (`-NoLaunch` on Windows) to set up without opening it.
 - **What it never touches:** it never opens, reads, moves, overwrites or deletes your vault or your medical records. You choose your files in the app window yourself, and only you type the passphrase.
-- **Where your vault lives:** in your own user folder, outside va-stack and outside `.venv`, so reinstalling never touches it. macOS: `~/Library/Application Support/va-stack`. Windows: `%APPDATA%\va-stack`. Linux: `~/.local/share/va-stack` (or `$XDG_DATA_HOME/va-stack`).
+- **Where your vault lives:** in your own user folder, not inside the va-stack folder, so installing again never touches it. macOS: `~/Library/Application Support/va-stack`. Windows: `%APPDATA%\va-stack`. Linux: `~/.local/share/va-stack` (or `$XDG_DATA_HOME/va-stack`).
 
 Ask your bot: "Install va-stack for me from github.com/IRKillRoyDev/va-stack with its setup script and start it. Ask me before each step."
 
@@ -51,7 +51,7 @@ Open the **Terminal** app (press Cmd+Space, type `Terminal`, press Enter).
 
    Success looks like no message at all; the prompt now ends in `va-stack`.
 
-4. Make a private Python space for va-stack (a "virtual environment").
+4. Make a private folder called `.venv` that holds va-stack and the programs it needs, kept apart from the rest of your computer.
 
    ```bash
    python3 -m venv .venv
@@ -88,7 +88,7 @@ Open the **Terminal** app (press Cmd+Space, type `Terminal`, press Enter).
 - `Could not find a version that satisfies the requirement sqlcipher3-binary`: your copy is old. In the va-stack folder run `git pull`, then repeat step 6.
 - `No module named venv` or `python3` opens an installer: install Python from python.org (not the Xcode copy), open a new Terminal window, and start again at step 3.
 - `(.venv)` is gone: you opened a new window. Run step 3 and step 5 again.
-- Step 6 tries to build `sqlcipher3` from source (you see `Building wheel for sqlcipher3` and then an error): your Python has no prebuilt wheel (Python 3.10 to 3.14 do). Use Python 3.12 from python.org, or, only as a last resort, install Homebrew from <https://brew.sh>, run `brew install sqlcipher`, and repeat step 6. Step 7 must still print a version.
+- Step 6 shows `Building wheel for sqlcipher3` and then an error: there is no ready-made encryption package for your Python version (there is one for Python 3.10 to 3.14). Use Python 3.12 from python.org, or, only as a last resort, install Homebrew from <https://brew.sh>, run `brew install sqlcipher`, and repeat step 6. Step 7 must still print a version.
 
 #### Windows
 
@@ -118,7 +118,7 @@ Open **PowerShell** (press the Windows key, type `PowerShell`, press Enter).
 
    Success looks like the prompt now ending in `va-stack>`.
 
-4. Make a private Python space for va-stack (a "virtual environment").
+4. Make a private folder called `.venv` that holds va-stack and the programs it needs, kept apart from the rest of your computer.
 
    ```powershell
    py -m venv .venv
@@ -184,7 +184,7 @@ Open a terminal window.
 
    Success looks like no message at all.
 
-4. Make a private Python space for va-stack (a "virtual environment").
+4. Make a private folder called `.venv` that holds va-stack and the programs it needs, kept apart from the rest of your computer.
 
    ```bash
    python3 -m venv .venv
@@ -258,7 +258,7 @@ Stay in the va-stack folder with `(.venv)` showing (run step 3 and step 5 again 
 va-stack
 ```
 
-The VA Stack window opens. Tick the consent box, choose a passphrase (or type yours to unlock), click **Choose medical file** to add a PDF or text file, then **Start review**. Your vault is kept in the folder named above. Without a screen, `va-stack --cli` asks the same questions in the terminal. Developers can also double-click `Start VA Stack.command` (macOS) or `Start VA Stack.bat` (Windows), or run `./start-va-stack.sh` (Linux); each one only turns on `.venv` and runs `va-stack`.
+The VA Stack window opens. Tick the consent box, choose a passphrase (or type yours to unlock), click **Choose medical file** to add a PDF or text file, then **Start review**. Your vault is kept in the folder named above. Without a screen, `va-stack --cli` asks the same questions in the terminal. Developers can also double-click `Start VA Stack.command` (macOS) or `Start VA Stack.bat` (Windows), or run `./start-va-stack.sh` (Linux); each one only turns on the private `.venv` folder and runs `va-stack`.
 
 ## Pipeline
 
@@ -318,4 +318,4 @@ Each command shows the consent-to-share notice, then prompts for the password lo
 10. **Lint and tests** (job `python`): `pip install -r requirements-dev.txt` (pinned pypdf, pytest, ruff, flake8), then `ruff check .`, `ruff format --check .`, `flake8 .`, and `pytest -q`. `tests/test_local_search.py` checks redaction of every identifier kind, the per-term and total caps, `--dry-run` counts-only output, in-memory PDF extraction, and that no socket is opened (socket creation is patched to raise). `tests/test_hardening.py` holds the red-team regression tests (redaction before windowing, SSN separator and invisible-character variants, old dates, addresses, phones, redacted terms and file names, line-split identifiers, and the SAFETY/CI wording checks).
 
 
-11. **Install and test on macOS and Windows** (jobs `macos` and `windows`, Python 3.12): the same commands as the Manual install above (`python3 -m venv .venv` and `source .venv/bin/activate` on macOS; `py -m venv .venv` and `.venv\Scripts\Activate.ps1` in PowerShell on Windows; then `python -m pip install -e .`, the encryption check and `va-stack --help`), then `python -m pip install -r requirements-dev.txt`, `python -m pytest -v -s tests/test_encryption.py` (the vault opens encrypted: PRAGMA cipher_version is non-empty and plain sqlite3 cannot read the file) and `python -m pytest -q -rs`. The window tests are skipped there because those runners set no DISPLAY; the `gui-headless` job runs them under Xvfb on Linux.
+11. **Install and test on macOS and Windows** (jobs `macos` and `windows`, Python 3.12): the same commands as the Manual install above (`python3 -m venv .venv` and `source .venv/bin/activate` on macOS; `py -m venv .venv` and `.venv\Scripts\Activate.ps1` in PowerShell on Windows; then `python -m pip install -e .`, the encryption check and `va-stack --help`), then `python -m pip install -r requirements-dev.txt`, `python -m pytest -v -s tests/test_encryption.py` (the vault opens encrypted: the encryption check prints a version and the file cannot be read without the passphrase) and `python -m pytest -q -rs`. The window tests are skipped there because those test computers have no screen; the `gui-headless` job runs them under Xvfb on Linux.
