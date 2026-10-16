@@ -587,6 +587,48 @@ class Vault:
             )
         return count
 
+    def ingest_file(self, path: Path, bot_id: str) -> int:
+        """Copy the page text of one local PDF or text file into the vault.
+
+        When to use: from the app's "Choose medical file" button. The file is
+        read on this computer only and stored under its file name; the
+        original file is never changed. Returns pages stored.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        path = Path(path)
+        suffix = path.suffix.lower()
+        if suffix != local_search.PDF_SUFFIX and suffix not in (
+            local_search.TEXT_SUFFIXES
+        ):
+            raise VaultError("choose a PDF or text (.txt) file")
+        rel = path.name
+        pages = local_search.load_pages(path)
+        for page_no, text in enumerate(pages, start=1):
+            self._conn.execute(
+                "INSERT OR REPLACE INTO records VALUES (?,?,?)", (rel, page_no, text)
+            )
+        self._conn.execute(
+            "INSERT OR IGNORE INTO files VALUES (?, ?)", (secrets.token_hex(8), rel)
+        )
+        self._log(
+            bot_id, "ingest", {"file": local_search.redact(rel)[0], "pages": len(pages)}
+        )
+        return len(pages)
+
+    def list_files(self, bot_id: str) -> list[tuple[str, int]]:
+        """Return (file name, page count) for every file in the vault. Logged.
+
+        When to use: to show what is imported and to build the review input.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        rows = self._conn.execute(
+            "SELECT file, count(*) FROM records GROUP BY file ORDER BY file"
+        ).fetchall()
+        self._log(bot_id, "list_files", {"files": len(rows)})
+        return [(r[0], int(r[1])) for r in rows]
+
     def search(self, terms: list[str], bot_id: str, **caps) -> dict:
         """Search the vault with the same redaction and caps as local_search.
 

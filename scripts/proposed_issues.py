@@ -885,6 +885,67 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
     }
 
 
+# Words that point at each diagnostic code in the pinned criteria. The app
+# uses them to find candidate quotes; the user still checks every row.
+AUTO_TERMS = {
+    "7806": ("eczema", "dermatitis"),
+    "6260": ("tinnitus", "ringing in"),
+    "5237": ("lumbosacral strain", "lumbar strain", "low back strain"),
+}
+AUTO_MAX_QUOTES = 2
+
+
+def _auto_findings(dc: str, quotes: list[str]) -> dict:
+    text = " ".join(quotes).lower()
+    if dc == "7806":
+        m = re.search(r"(\d{1,3})\s*(?:%|percent) of the entire body", text)
+        return {"body_area_percent": int(m.group(1))} if m else {}
+    if dc == "6260" and "recurrent" in text:
+        return {"tinnitus": "recurrent"}
+    return {}
+
+
+def auto_input(vault, bot_id: str) -> dict:
+    """Build the proposed-issues input from the records in the vault.
+
+    When to use: in the app, so the user never writes JSON. For each code in
+    AUTO_TERMS, takes up to AUTO_MAX_QUOTES whole sentences (redacted, at
+    least MIN_QUOTE characters) that mention it, with file and page. Basis,
+    dates and the in-service event are left empty for the user's review;
+    nothing here decides what a quote means.
+    """
+    criteria = load_criteria()
+    found: dict[str, list[dict]] = {dc: [] for dc in AUTO_TERMS}
+    for name, pages in vault.list_files(bot_id=bot_id):
+        for page in range(1, pages + 1):
+            text = vault.open_link(vault.link_for(name, page), bot_id=bot_id)
+            for sent in split_sentences(redact(text)[0]):
+                sent = " ".join(sent.split())
+                low = sent.lower()
+                if len(sent) < MIN_QUOTE:
+                    continue
+                for dc, terms in AUTO_TERMS.items():
+                    ev = found[dc]
+                    if len(ev) < AUTO_MAX_QUOTES and any(t in low for t in terms):
+                        ev.append({"file": name, "page": page, "quote": sent})
+    issues = []
+    for dc, ev in found.items():
+        if not ev or dc not in criteria["dcs"]:
+            continue
+        issues.append(
+            {
+                "condition": criteria["dcs"][dc]["name"],
+                "basis": "direct",
+                "in_service_event": "",
+                "approx_date": "",
+                "dc": dc,
+                "findings": _auto_findings(dc, [e["quote"] for e in ev]),
+                "evidence": ev,
+            }
+        )
+    return {"track": "B1", "bilateral_pairs": [], "issues": issues}
+
+
 def _row_id(n: int, issue: dict, links: list[dict]) -> str:
     """Row id = position + hash of condition, DC, cited quotes and pointers.
 
