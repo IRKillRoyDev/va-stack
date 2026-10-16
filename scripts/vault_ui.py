@@ -167,8 +167,9 @@ def run_review(report: dict, vault, bot_id: str, on_ready=None) -> int:
     review_session.ReviewSession (shared with the text fallback); this only
     draws it: one row per screen, big Yes and No buttons, Back and Next,
     a summary cart with Edit links, and one Confirm all button. Keys:
-    Enter = Yes, n = No, Esc = Back, Right = Next. Needs a display and the
-    tkinter package; falls back to review_session.run_cli() without them.
+    y = Yes, n = No, Esc = Back, Right = Next; Enter alone is not a Yes.
+    Needs a display and the tkinter package; falls back to
+    review_session.run_cli() without them.
     """
     rs = _sibling("review_session")
     try:

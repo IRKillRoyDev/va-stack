@@ -110,7 +110,7 @@ class ReviewSession:
             self._advance()
 
     def key(self, name: str) -> None:
-        """Keyboard: Enter or y is Yes, n is No, Esc goes back, Right is Next."""
+        """Keyboard: y is Yes (Enter is not), n is No, Esc goes back, Right is Next."""
         if name in KEYS:
             self.press(KEYS[name])
 

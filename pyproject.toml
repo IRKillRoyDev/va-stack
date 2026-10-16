@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "va-stack"
+version = "0.2.0"
+description = "Prepare (not file) VA disability claims from your own records."
+requires-python = ">=3.10"
+dependencies = [
+    "pypdf==5.1.0",
+    "sqlcipher3-binary==0.6.0; sys_platform == 'linux'",
+    "sqlcipher3==0.6.4; sys_platform == 'darwin'",
+    "sqlcipher3==0.6.4; sys_platform == 'win32'",
+    "argon2-cffi==25.1.0",
+]
+
+[project.scripts]
+va-stack = "va_stack_app:main"
+
+[tool.setuptools]
+package-dir = { "" = "scripts" }
+py-modules = [
+    "app_paths",
+    "local_search",
+    "proposed_issues",
+    "records_vault",
+    "review_session",
+    "va_stack_app",
+    "vault_ui",
+]
