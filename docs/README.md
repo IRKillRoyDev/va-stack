@@ -19,7 +19,7 @@ The [va-claims agent](../agents/va-claims.md) runs:
 - The user names one local folder; records are read only from there.
 - It must not be inside a git repository or a public sync folder.
 - The index and extractions (`_index.json`, `_extract.json`, `claims.json`) are written into that same folder and nowhere else.
-- Records are never pasted into chat, committed, or uploaded. Outputs redact what the user does not need.
+- The skills never commit, upload, or copy the record files. The text the bot reads is processed by the AI service it runs on, so check that service's privacy terms; a fully offline setup needs a local model. Outputs redact what the user does not need.
 - This repository holds fictional test data only (`tests/fake-records/`).
 
 ## Where accredited review fits
