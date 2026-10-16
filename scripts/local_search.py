@@ -78,7 +78,8 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         # and unlabeled space-separated numbers are not treated as phones.
         "PHONE",
         re.compile(
-            r"(?:\+\d{1,3}(?:[\s.-]?\d{1,4}){2,5}(?!\d)"
+            r"(?:\+(?=(?:[\s.-]?\d){8,15}(?![\s.-]?\d))"
+            r"\d{1,3}(?:[\s.-]?\d{1,4}){2,5}(?!\d)"
             r"|(?:\+?1[\s.-]?)?\(\d{3}\)\s?\d{3}[\s.-]\d{4}(?!\d)"
             r"|(?<![\d-])(?:\+?1[.-])?\d{3}[.-]\d{3}[.-]\d{4}(?![\d-])"
             r"|(?P<lbl>(?<![A-Za-z])(?:tel|phone|ph|call|cell|mobile|fax)"
@@ -107,27 +108,45 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         # comma; a lowercase state only right after a comma.
         "ADDRESS",
         re.compile(
-            r"(?P<lbl>(?P<c>,[ \t]*)|\b[A-Z][a-z]+[ \t]+)"
+            r"(?P<lbl>(?P<c>,[ \t]*)|\b[A-Z][a-z]+[ \t]+|^[ \t]*)"
             rf"(?(c)(?i:{STATES})|(?:{STATES}))\b[ \t]*,?[ \t]*"
-            r"\d{5}(?:-\d{4})?(?!\d)(?=[ \t]*(?:$|[^\w\s]))",
+            r"\d{5}(?:-\d{4})?(?!\d)"
+            r"(?=[ \t]*(?:$|[^\w\s]|(?:USA|U\.S\.A?\.?|United States)\b))",
             re.MULTILINE,
         ),
     ),
 ]
 
+
+def _spaced(word: str) -> str:
+    """Regex for word whose letters may be split by dots, hyphens or line breaks."""
+    return r"[.\-\s]{0,3}".join(word)
+
+
 # Birth labels. (?<![A-Za-z]) instead of \b so "_" counts as a boundary.
+# Letters may be split across lines or hyphenated ("D\nO\nB", "Bir-\nth").
 BIRTH_LABEL = re.compile(
-    r"(?<![A-Za-z])(?:d[.\- ]{0,2}o[.\- ]{0,2}b|birth(?:day|date)?|born"
-    r"|b\.(?=\s*[(\[]?\d))(?![A-Za-z])",
+    r"(?<![A-Za-z])(?:"
+    + _spaced("dob")
+    + "|"
+    + _spaced("birth")
+    + r"(?:day|date)?|"
+    + _spaced("born")
+    + r"|b\.(?=\s*[(\[]?\d))(?![A-Za-z])",
     re.IGNORECASE,
 )
-# Any date-like value, including space-separated numeric dates.
+# Any date-like value, including space-separated numeric dates and prose
+# such as "March of 1961, the 14th" (only redacted next to a birth label).
 DATE_LIKE = re.compile(
     r"(?<!\d)(?:" + DATE_VALUE + r"|\d{1,2}\s\d{1,2}\s\d{2,4}(?!\d)"
-    r"|\d{4}\s\d{1,2}\s\d{1,2}(?!\d))",
+    r"|\d{4}\s\d{1,2}\s\d{1,2}(?!\d)"
+    rf"|\b{MONTHS}\s+(?:of\s+)?\d{{4}}(?:,?\s+the\s+\d{{1,2}}{ORD}\b)?)",
     re.IGNORECASE,
 )
-BIRTH_WINDOW = 25  # a date must start within this many characters of a label
+BIRTH_WINDOW = 80  # a date may start this many characters after a label
+# The label-to-date link never crosses a clause break ("DOB on file; exam 03/14/2024").
+CLAUSE_BREAK = re.compile(r"[;!?]|\.\s+[A-Z]")
+BIRTH_WINDOW_AFTER = 12  # or end this many characters before one ("(DOB)")
 
 
 def _redact_birth_dates(text: str) -> tuple[str, int]:
@@ -136,14 +155,30 @@ def _redact_birth_dates(text: str) -> tuple[str, int]:
     When to use: first step of redact(), in every mode (keep_dates or not),
     so labeled dates of birth of any age and format are removed.
     """
+    dates = list(DATE_LIKE.finditer(text))
+    chosen: dict[int, re.Match[str]] = {}
+    for label in BIRTH_LABEL.finditer(text):
+        after = [
+            d
+            for d in dates
+            if label.end() <= d.start() <= label.end() + BIRTH_WINDOW
+            and not CLAUSE_BREAK.search(text, label.end(), d.start())
+        ]
+        if after:
+            chosen[after[0].start()] = after[0]
+        before = [
+            d
+            for d in dates
+            if label.start() - BIRTH_WINDOW_AFTER <= d.end() <= label.start()
+        ]
+        if before:
+            chosen[before[-1].start()] = before[-1]
     out: list[str] = []
     pos = 0
     count = 0
-    for label in BIRTH_LABEL.finditer(text):
-        if label.start() < pos:
-            continue
-        date = DATE_LIKE.search(text, label.end(), label.end() + BIRTH_WINDOW + 40)
-        if date is None or date.start() - label.end() > BIRTH_WINDOW:
+    for start in sorted(chosen):
+        date = chosen[start]
+        if date.start() < pos:
             continue
         out.append(text[slice(pos, date.start())])
         out.append("[REDACTED-DOB]" + "\n" * date.group(0).count("\n"))
@@ -201,6 +236,14 @@ def _date_tag(m: re.Match[str]) -> str:
     return f"[DATE-{year}]"
 
 
+# An explicit part/serial label right before a number means it is not a phone.
+PART_LABEL = re.compile(
+    r"(?<![A-Za-z])(?:part|p/n|pn|sku|model|serial|s/n|lot|item)"
+    r"(?:\s*(?:no\.?|number|#))?[\s.:#]*$",
+    re.IGNORECASE,
+)
+
+
 def _tag(kind: str):
     """Build a replacement that keeps any label and the match's line breaks.
 
@@ -209,6 +252,9 @@ def _tag(kind: str):
 
     def replace(m: re.Match[str]) -> str:
         label = m.groupdict().get("lbl") or ""
+        if kind == "PHONE" and not label:
+            if PART_LABEL.search(m.string[slice(max(0, m.start() - 24), m.start())]):
+                return m.group(0)
         value = m.group(0).removeprefix(label)
         return label + f"[REDACTED-{kind}]" + "\n" * value.count("\n")
 

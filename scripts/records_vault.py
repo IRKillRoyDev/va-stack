@@ -6,8 +6,12 @@ the user's password with Argon2id. Unlocking always asks for consent to
 share first; the password is typed locally and never passed in argv,
 environment, stdout, or logs. Every request must carry the requesting
 bot's id, and an access log inside the encrypted database records what
-was touched (hash-chained so edits or deletions are detectable). Snippet
-text is never logged, only file/page/line and a SHA-256 hash.
+was touched. Log entries are HMAC-chained with a key derived from the
+vault key, and a MAC'd head (entry count + last MAC) is kept outside the
+database, so edits, deletions, truncation and rollback to an older copy
+are detected by someone without the password. Anyone with the password can
+still rewrite the log and head. Snippet text is never logged, only
+file/page/line and a keyed HMAC-SHA256 of the text.
 
 When to use: instead of plain-folder search when the user wants records
 kept encrypted at rest between sessions.
@@ -19,11 +23,14 @@ import argparse
 import datetime
 import getpass
 import hashlib
+import hmac
 import importlib.util
 import json
+import os
 import re
 import secrets
 import sys
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -46,6 +53,17 @@ CONSENT_TEXT = (
 )
 
 DEFAULT_KDF = {"time_cost": 3, "memory_cost": 65536, "parallelism": 4}
+# Default = RFC 9106 section 4 "SECOND RECOMMENDED option": "Argon2id with
+# t=3 iterations, p=4 lanes, m=2^(16) (64 MiB of RAM)"
+# (https://www.rfc-editor.org/rfc/rfc9106.txt, checked 2026-10-16).
+# Floor = one of OWASP's listed minimums: "m=19456 (19 MiB), t=2, p=1"
+# (https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html,
+# checked 2026-10-16). RFC 9106 itself sets no minimum below its defaults.
+# Requiring t>=2 and m>=19456 together also rejects OWASP's equal-strength
+# m=47104, t=1 option; that is deliberate (stricter).
+MIN_KDF = {"time_cost": 2, "memory_cost": 19456, "parallelism": 1}
+BOT_ID_MAX = 64
+BOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 KEY_LEN = 32
 SALT_LEN = 16
 GENESIS = "0" * 64
@@ -114,25 +132,51 @@ def derive_key(password: bytearray, header: dict) -> bytearray:
     return bytearray(raw)
 
 
+# Gate state lives here, not on the gate object, so setting attributes on a
+# gate (or passing a look-alike object) cannot forge or reuse consent.
+_ACKED: "set[int]" = set()
+_SPENT: "set[int]" = set()
+_LIVE: "dict[int, object]" = {}
+_TOKENS: "set[int]" = set()
+
+
 class ConsentGate:
     """One-session consent record; it can open the vault exactly once.
 
-    When to use: create a new gate for every unlock attempt.
+    When to use: create a new gate for every unlock attempt. Limit: code in
+    the same Python process can still call acknowledge(); the real gate is
+    the human-only UI or a real terminal (see _cli_unlock).
     """
 
+    __slots__ = ("__weakref__",)
+
     def __init__(self) -> None:
-        self.acknowledged = False
-        self.used = False
+        _LIVE[id(self)] = self
+
+    @property
+    def acknowledged(self) -> bool:
+        return id(self) in _ACKED
+
+    @property
+    def used(self) -> bool:
+        return id(self) in _SPENT
 
     def acknowledge(self) -> None:
         """Record that the user ticked the consent box this session."""
-        self.acknowledged = True
+        if id(self) not in _SPENT:
+            _ACKED.add(id(self))
 
     def consume(self) -> None:
         """Spend the consent on one unlock; raise if missing or reused."""
-        if not self.acknowledged or self.used:
+        if (
+            type(self) is not ConsentGate
+            or _LIVE.get(id(self)) is not self
+            or id(self) not in _ACKED
+            or id(self) in _SPENT
+        ):
             raise ConsentRequired("consent to share is required for each unlock")
-        self.used = True
+        _SPENT.add(id(self))
+        _ACKED.discard(id(self))
 
 
 class UnlockFlow:
@@ -160,7 +204,10 @@ class UnlockFlow:
         if not self.password_enabled:
             zeroize(password)
             raise ConsentRequired("tick consent before entering the password")
-        return Vault.open(self.db_path, password, self._gate)
+        gate = self._gate
+        self._gate = ConsentGate()  # never hand the spent gate back
+        _SPENT.add(id(self._gate))  # a flow unlocks once; make a new flow
+        return Vault.open(self.db_path, password, gate)
 
 
 def _connect(db_path: Path, key: bytearray):
@@ -169,6 +216,8 @@ def _connect(db_path: Path, key: bytearray):
     When to use: inside create_vault() and Vault.open() only.
     """
     conn = sqlcipher3.connect(str(db_path), isolation_level=None)
+    # Limit (SAFETY.md): this builds an immutable hex copy of the key that
+    # cannot be zeroized; sqlcipher3 only takes the key as SQL text.
     conn.execute(f"PRAGMA key = \"x'{key.hex()}'\"")
     try:
         conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
@@ -192,7 +241,11 @@ CREATE TABLE IF NOT EXISTS access_log (
 
 
 def create_vault(
-    db_path: Path, password: bytearray, kdf_params: dict | None = None
+    db_path: Path,
+    password: bytearray,
+    kdf_params: dict | None = None,
+    bots: list[str] | None = None,
+    insecure_test_kdf: bool = False,
 ) -> None:
     """Create an empty encrypted vault and its KDF header file.
 
@@ -204,6 +257,12 @@ def create_vault(
         raise VaultError(f"already exists: {db_path}")
     header = {"version": 1, "kdf": "argon2id", "salt": secrets.token_hex(SALT_LEN)}
     header.update(kdf_params or DEFAULT_KDF)
+    weak = [k for k, v in MIN_KDF.items() if int(header.get(k, 0)) < v]
+    if weak and not insecure_test_kdf:
+        zeroize(password)
+        raise VaultError(f"Argon2id parameters below minimum: {', '.join(weak)}")
+    if bots is not None:
+        header["bots"] = sorted({_normalize_bot(b) for b in bots})
     key = derive_key(password, header)
     zeroize(password)
     try:
@@ -215,23 +274,66 @@ def create_vault(
     header_path(db_path).write_text(json.dumps(header, indent=2) + "\n")
 
 
-def _entry_hash(prev_hash: str, fields: dict) -> str:
-    """Hash one log entry together with the previous entry's hash.
+def hkdf(key: bytearray, info: bytes, length: int = 32) -> bytearray:
+    """HKDF-SHA256 (RFC 5869) with an all-zero salt.
+
+    When to use: to derive separate log-MAC and snippet-MAC keys from the
+    vault key, so neither is ever the SQLCipher key itself.
+    """
+    prk = hmac.new(b"\x00" * 32, bytes(key), hashlib.sha256).digest()
+    out, block, i = b"", b"", 1
+    while len(out) < length:
+        block = hmac.new(prk, block + info + bytes([i]), hashlib.sha256).digest()
+        out += block
+        i += 1
+    return bytearray(out[:length])
+
+
+def _entry_hash(prev_hash: str, fields: dict, mac_key: bytearray) -> str:
+    """HMAC one log entry together with the previous entry's MAC.
 
     When to use: when writing and when verifying the access log.
     """
     body = json.dumps(fields, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256((prev_hash + body).encode()).hexdigest()
+    return hmac.new(bytes(mac_key), (prev_hash + body).encode(), "sha256").hexdigest()
 
 
-def _require_bot(bot_id) -> str:
-    """Return a stripped bot id or raise BotIdRequired.
+def head_path(db_path: Path) -> Path:
+    """Return the path of the MAC'd log head kept outside the database."""
+    db_path = Path(db_path)
+    return db_path.with_name(db_path.name + ".loghead.json")
 
-    When to use: at the top of every request method.
+
+_ZERO_WIDTH = {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u180e"}
+
+
+def _normalize_bot(bot_id) -> str:
+    """NFKC-normalize and validate a bot id, or raise BotIdRequired.
+
+    Rejects zero-width and non-printable characters, surrounding spaces or
+    newlines, and anything over BOT_ID_MAX characters.
     """
     if not isinstance(bot_id, str) or not bot_id.strip():
         raise BotIdRequired("every request must carry the requesting bot id")
-    return bot_id.strip()
+    if any(c in _ZERO_WIDTH or not c.isprintable() for c in bot_id):
+        raise BotIdRequired("bot id has invisible or control characters")
+    norm = unicodedata.normalize("NFKC", bot_id)
+    if len(norm) > BOT_ID_MAX or norm != bot_id or not BOT_ID_RE.fullmatch(norm):
+        raise BotIdRequired("bot id must be 1-64 of A-Z a-z 0-9 . _ -")
+    return norm
+
+
+def _require_bot(bot_id, registered: list[str] | None = None) -> str:
+    """Return a validated bot id or raise BotIdRequired.
+
+    When to use: at the top of every request method. When the vault header
+    lists registered bots, only those ids are accepted. Limit: an id is a
+    claim, not a credential; any local caller can claim a registered id.
+    """
+    norm = _normalize_bot(bot_id)
+    if registered is not None and norm not in registered:
+        raise BotIdRequired(f"bot id not registered for this vault: {norm}")
+    return norm
 
 
 class Vault:
@@ -240,9 +342,16 @@ class Vault:
     When to use: obtain with Vault.open(); always close() when done.
     """
 
-    def __init__(self, conn, key: bytearray) -> None:
+    def __init__(self, conn, key: bytearray, token=None, db_path=None, header=None):
+        if token is None or id(token) not in _TOKENS:
+            raise ConsentRequired("open the vault with Vault.open() after consent")
+        _TOKENS.discard(id(token))
         self._conn = conn
         self._key = key
+        self._db_path = Path(db_path)
+        self._bots = (header or {}).get("bots")
+        self._log_key = hkdf(key, b"va-stack access-log v1")
+        self._snip_key = hkdf(key, b"va-stack snippet-mac v1")
         self.session_id = str(uuid.uuid4())
 
     @classmethod
@@ -253,6 +362,8 @@ class Vault:
         The password buffer is zeroized whatever happens.
         """
         try:
+            if type(consent) is not ConsentGate:
+                raise ConsentRequired("consent to share is required for each unlock")
             consent.consume()
             header = json.loads(header_path(db_path).read_text())
             key = derive_key(password, header)
@@ -264,14 +375,37 @@ class Vault:
             zeroize(key)
             raise
         conn.executescript(SCHEMA)
-        return cls(conn, key)
+        token = object()
+        _TOKENS.add(id(token))
+        return cls(conn, key, token, db_path, header)
 
     def _check_open(self) -> None:
         if self._conn is None:
             raise VaultLocked("vault is closed")
 
+    def _mac(self, text: str) -> str:
+        """Keyed HMAC-SHA256 of text (a plain hash would confirm guesses)."""
+        return hmac.new(bytes(self._snip_key), text.encode(), "sha256").hexdigest()
+
+    def _bot(self, bot_id) -> str:
+        return _require_bot(bot_id, self._bots)
+
+    def _head_mac(self, count: int, last: str) -> str:
+        msg = f"head|{count}|{last}".encode()
+        return hmac.new(bytes(self._log_key), msg, "sha256").hexdigest()
+
+    def _write_head(self, count: int, last: str) -> None:
+        path = head_path(self._db_path)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(
+            json.dumps(
+                {"count": count, "last": last, "mac": self._head_mac(count, last)}
+            )
+        )
+        os.replace(tmp, path)
+
     def _log(self, bot_id: str, action: str, detail: dict) -> None:
-        """Append one hash-chained entry to the access log."""
+        """Append one HMAC-chained entry and update the MAC'd head."""
         row = self._conn.execute(
             "SELECT hash FROM access_log ORDER BY seq DESC LIMIT 1"
         ).fetchone()
@@ -288,8 +422,9 @@ class Vault:
         }
         self._conn.execute(
             "INSERT INTO access_log VALUES (?,?,?,?,?,?,?,?,?)",
-            (*fields.values(), prev, _entry_hash(prev, fields)),
+            (*fields.values(), prev, (mac := _entry_hash(prev, fields, self._log_key))),
         )
+        self._write_head(fields["seq"], mac)
 
     def ingest_folder(self, folder: Path, bot_id: str) -> int:
         """Copy page text from a local folder into the encrypted vault.
@@ -297,7 +432,7 @@ class Vault:
         When to use: to add or refresh records. Returns pages stored.
         """
         self._check_open()
-        bot_id = _require_bot(bot_id)
+        bot_id = self._bot(bot_id)
         count = 0
         files: dict[str, int] = {}
         for rel, page_no, text in local_search.iter_folder_pages(Path(folder)):
@@ -322,7 +457,7 @@ class Vault:
         When to use: for every bot search request; logs records searched.
         """
         self._check_open()
-        bot_id = _require_bot(bot_id)
+        bot_id = self._bot(bot_id)
         pages = self._conn.execute(
             "SELECT file, page, text FROM records ORDER BY file, page"
         ).fetchall()
@@ -331,7 +466,11 @@ class Vault:
         self._log(
             bot_id,
             "search",
-            {"terms": result["terms"], "records": records, "hits": len(result["hits"])},
+            {
+                "terms": [self._mac(t)[:16] for t in result["terms"]],
+                "records": records,
+                "hits": len(result["hits"]),
+            },
         )
         return result
 
@@ -341,14 +480,14 @@ class Vault:
         When to use: right after the user approves a snippet list.
         """
         self._check_open()
-        bot_id = _require_bot(bot_id)
+        bot_id = self._bot(bot_id)
         for hit in hits:
-            digest = hashlib.sha256(hit["context"].encode()).hexdigest()
+            digest = self._mac(hit["context"])
             detail = {
-                "file": hit["file"],
+                "file": local_search.redact(hit["file"])[0],
                 "page": hit["page"],
                 "line": hit["line"],
-                "sha256": digest,
+                "hmac": digest,
             }
             self._log(bot_id, "snippet_sent", detail)
 
@@ -360,18 +499,18 @@ class Vault:
         When to use: only after the user approves that file and page.
         """
         self._check_open()
-        bot_id = _require_bot(bot_id)
+        bot_id = self._bot(bot_id)
         row = self._conn.execute(
             "SELECT text FROM records WHERE file = ? AND page = ?", (file, page)
         ).fetchone()
         if row is None:
             raise VaultError(f"no such page: {file} p.{page}")
         text = local_search.redact(row[0], keep_dates)[0]
-        digest = hashlib.sha256(text.encode()).hexdigest()
+        digest = self._mac(text)
         self._log(
             bot_id,
             "page_approved",
-            {"file": local_search.redact(file)[0], "page": page, "sha256": digest},
+            {"file": local_search.redact(file)[0], "page": page, "hmac": digest},
         )
         return text
 
@@ -396,7 +535,7 @@ class Vault:
         in a report. Every open is logged with the requesting bot id.
         """
         self._check_open()
-        bot_id = _require_bot(bot_id)
+        bot_id = self._bot(bot_id)
         m = LINK_RE.fullmatch(link or "")
         if m is None:
             raise VaultError("not a vault link")
@@ -414,12 +553,14 @@ class Vault:
         )
         return local_search.redact(row[0], keep_dates)[0]
 
-    def read_log(self) -> list[dict]:
+    def read_log(self, bot_id: str | None = None) -> list[dict]:
         """Return the access log entries (no record text is ever stored there).
 
         When to use: to show the user what was touched.
         """
         self._check_open()
+        if bot_id is not None:
+            self._log(self._bot(bot_id), "log_read", {})
         rows = self._conn.execute(
             "SELECT seq, ts, session_id, consent_version, bot_id, action, detail,"
             " prev_hash, hash FROM access_log ORDER BY seq"
@@ -433,12 +574,23 @@ class Vault:
             out.append(entry)
         return out
 
-    def verify_log(self) -> bool:
-        """Recompute the hash chain; False if any entry was edited or removed.
+    def verify_log(self, bot_id: str | None = None) -> bool:
+        """Recompute the HMAC chain and check the head outside the database.
+
+        False if any entry was edited, removed, or truncated, or the database
+        was rolled back to an older copy. Limit: someone with the password can
+        recompute everything, and rolling back the database and head file
+        together is only caught by an external copy of the head.
 
         When to use: at unlock and before trusting the log.
         """
         self._check_open()
+        ok = self._verify_chain()
+        if bot_id is not None:
+            self._log(self._bot(bot_id), "verify", {"log_valid": ok})
+        return ok
+
+    def _verify_chain(self) -> bool:
         prev = GENESIS
         expected_seq = 1
         rows = self._conn.execute(
@@ -451,11 +603,23 @@ class Vault:
             fields["detail"] = row[6]
             if row[0] != expected_seq or row[7] != prev:
                 return False
-            if _entry_hash(prev, fields) != row[8]:
+            if not hmac.compare_digest(
+                _entry_hash(prev, fields, self._log_key), row[8]
+            ):
                 return False
             prev = row[8]
             expected_seq += 1
-        return True
+        path = head_path(self._db_path)
+        if not path.exists():
+            return not rows
+        try:
+            head = json.loads(path.read_text())
+            count, last, mac = int(head["count"]), str(head["last"]), str(head["mac"])
+        except (ValueError, KeyError, TypeError):
+            return False
+        if not hmac.compare_digest(self._head_mac(count, last), mac):
+            return False
+        return count == len(rows) and last == prev
 
     def close(self) -> None:
         """Zeroize the key, close the database, and lock the session.
@@ -466,6 +630,8 @@ class Vault:
             self._conn.close()
             self._conn = None
         zeroize(self._key)
+        zeroize(self._log_key)
+        zeroize(self._snip_key)
 
     def __enter__(self) -> Vault:
         return self
@@ -474,11 +640,26 @@ class Vault:
         self.close()
 
 
+def _stdin_is_terminal() -> bool:
+    """True only when stdin is an interactive terminal (not a pipe or file)."""
+    try:
+        return os.isatty(sys.stdin.fileno())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
 def _cli_unlock(db: Path) -> Vault | None:
     """Ask for consent, then the password, on the local terminal.
 
     When to use: from main(); returns None (still locked) if consent declined.
     """
+    if not _stdin_is_terminal():
+        print(
+            "refusing: consent and password must be typed at a real terminal, "
+            "not piped stdin",
+            file=sys.stderr,
+        )
+        return None
     print(CONSENT_TEXT, file=sys.stderr)
     answer = input("Type 'yes' to consent and continue: ").strip().lower()
     gate = ConsentGate()
@@ -556,9 +737,9 @@ def main(argv: list[str] | None = None) -> int:
                 keep_dates=args.keep_dates,
             )
         elif args.cmd == "verify":
-            out = {"log_valid": vault.verify_log()}
+            out = {"log_valid": vault.verify_log(bot_id=args.bot_id)}
         else:
-            out = vault.read_log()
+            out = vault.read_log(bot_id=args.bot_id)
         print(json.dumps(out, indent=2))
         return 0
     except BotIdRequired as exc:

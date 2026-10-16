@@ -52,7 +52,7 @@ def consented():
 @pytest.fixture
 def db(tmp_path):
     path = tmp_path / "records.db"
-    rv.create_vault(path, pw(), kdf_params=FAST)
+    rv.create_vault(path, pw(), kdf_params=FAST, insecure_test_kdf=True)
     vault = rv.Vault.open(path, pw(), consented())
     vault.ingest_folder(FAKE, bot_id=BOT)
     vault.close()
@@ -141,7 +141,7 @@ def test_search_redacts_and_logs_without_text(db):
         actions = [e["action"] for e in vault.read_log()]
         assert {"ingest", "search", "snippet_sent", "page_approved"} <= set(actions)
         sent = [e for e in vault.read_log() if e["action"] == "snippet_sent"][0]
-        assert set(sent["detail"]) == {"file", "page", "line", "sha256"}
+        assert set(sent["detail"]) == {"file", "page", "line", "hmac"}
         assert all(e["bot_id"] == BOT for e in vault.read_log())
         assert all(e["consent_version"] == rv.CONSENT_VERSION for e in vault.read_log())
         assert vault.verify_log()
@@ -205,6 +205,7 @@ def test_cli_consent_declined_never_prompts_password(db, monkeypatch, capsys):
 
 
 def test_cli_search_after_consent(db, monkeypatch, capsys):
+    monkeypatch.setattr(rv, "_stdin_is_terminal", lambda: True)
     monkeypatch.setattr("builtins.input", lambda prompt="": "yes")
     monkeypatch.setattr(rv.getpass, "getpass", lambda prompt="": "correct horse fake")
     assert rv.main(["search", str(db), "--bot-id", BOT, "-t", "strain"]) == 0

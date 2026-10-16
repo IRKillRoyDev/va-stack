@@ -64,7 +64,7 @@ def run(db_path: Path, bot_id: str) -> int:
             root.destroy()
             return
         try:
-            ok = vault.verify_log()
+            ok = vault.verify_log(bot_id=bot_id)
             messagebox.showinfo(
                 "Unlocked",
                 f"Unlocked for bot id {bot_id}. Access log valid: {ok}. "
