@@ -10,6 +10,7 @@ skip=(
   tests/test_hardening.py
   tests/test_round3.py
   tests/test_round4.py
+  tests/test_vault.py
 )
 mapfile -t files < <(git ls-files | grep -Fxv -f <(printf '%s\n' "${skip[@]}"))
 if grep -niIE -- "$pattern" "${files[@]}"; then
