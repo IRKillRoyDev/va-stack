@@ -1,0 +1,8 @@
+=== PAGE 1 ===
+FICTIONAL TEST RECORD - VA Primary Care
+2025-02-10 Diagnosis: lumbosacral strain, chronic.
+=== PAGE 2 ===
+2025-02-10 Patient reports numbness radiating down the left leg.
+=== PAGE 3 ===
+2025-04-02 Diagnosis: tinnitus, bilateral.
+Patient reports recurrent ringing in both ears.

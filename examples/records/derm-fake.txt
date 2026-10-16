@@ -1,0 +1,5 @@
+=== PAGE 1 ===
+FICTIONAL TEST RECORD - Dermatology clinic (synthetic, not a real person)
+2025-06-03 Diagnosis: eczema (atopic dermatitis), chronic.
+Exam: characteristic lesions on about 20 percent of the entire body; exposed areas not measured.
+Treatment over the past 12 months: topical cream only.
