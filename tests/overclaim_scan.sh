@@ -11,6 +11,7 @@ skip=(
   tests/test_round3.py
   tests/test_round4.py
   tests/test_round5.py
+  tests/test_round6.py
   tests/test_vault.py
 )
 mapfile -t files < <(git ls-files | grep -Fxv -f <(printf '%s\n' "${skip[@]}"))
@@ -19,8 +20,15 @@ mapfile -t files < <(git ls-files | grep -Fxv -f <(printf '%s\n' "${skip[@]}"))
 found=0
 for f in "${files[@]}"; do
   grep -qI . "$f" 2>/dev/null || continue
-  if sed -e 's/[‐‑‒–—―−]/-/g' -e 's/[[:space:]][[:space:]]*/ /g' "$f" \
-      | grep -niIE -- "$pattern" | sed "s|^|$f:|"; then
+  # Unicode spaces (NBSP, thin, narrow NBSP, ideographic) become plain
+  # spaces and underscores become hyphens before matching. A failed
+  # normalization fails the scan instead of silently matching nothing.
+  if ! text=$(sed -e 's/[              　]/ /g' -e 's/_/-/g' \
+      -e 's/[‐‑‒–—―−]/-/g' -e 's/[[:space:]][[:space:]]*/ /g' "$f"); then
+    echo "normalization failed for $f"
+    exit 2
+  fi
+  if printf '%s\n' "$text" | grep -niIE -- "$pattern" | sed "s|^|$f:|"; then
     found=1
   fi
 done
