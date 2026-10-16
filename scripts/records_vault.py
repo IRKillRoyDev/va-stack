@@ -21,6 +21,7 @@ import getpass
 import hashlib
 import importlib.util
 import json
+import re
 import secrets
 import sys
 import uuid
@@ -48,6 +49,7 @@ DEFAULT_KDF = {"time_cost": 3, "memory_cost": 65536, "parallelism": 4}
 KEY_LEN = 32
 SALT_LEN = 16
 GENESIS = "0" * 64
+LINK_RE = re.compile(r"vault://(?P<rid>[0-9a-f]{16})#page=(?P<page>\d+)")
 
 _SPEC = importlib.util.spec_from_file_location(
     "local_search", Path(__file__).resolve().parent / "local_search.py"
@@ -180,6 +182,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS records (
     file TEXT NOT NULL, page INTEGER NOT NULL, text TEXT NOT NULL,
     PRIMARY KEY (file, page));
+CREATE TABLE IF NOT EXISTS files (
+    record_id TEXT PRIMARY KEY, file TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS access_log (
     seq INTEGER PRIMARY KEY, ts TEXT NOT NULL, session_id TEXT NOT NULL,
     consent_version TEXT NOT NULL, bot_id TEXT NOT NULL, action TEXT NOT NULL,
@@ -259,6 +263,7 @@ class Vault:
         except WrongPassword:
             zeroize(key)
             raise
+        conn.executescript(SCHEMA)
         return cls(conn, key)
 
     def _check_open(self) -> None:
@@ -301,6 +306,10 @@ class Vault:
             )
             files[rel] = files.get(rel, 0) + 1
             count += 1
+        for rel in files:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO files VALUES (?, ?)", (secrets.token_hex(8), rel)
+            )
         for rel, pages in sorted(files.items()):
             self._log(
                 bot_id, "ingest", {"file": local_search.redact(rel)[0], "pages": pages}
@@ -365,6 +374,45 @@ class Vault:
             {"file": local_search.redact(file)[0], "page": page, "sha256": digest},
         )
         return text
+
+    def link_for(self, file: str, page: int) -> str:
+        """Return a vault link (vault://<record_id>#page=N) with no file path.
+
+        When to use: when a report needs to point at a record page; the
+        record id is random, so file names (which may hold PII) stay inside.
+        """
+        self._check_open()
+        row = self._conn.execute(
+            "SELECT record_id FROM files WHERE file = ?", (file,)
+        ).fetchone()
+        if row is None:
+            raise VaultError("no such record in the vault")
+        return f"vault://{row[0]}#page={int(page)}"
+
+    def open_link(self, link: str, bot_id: str, keep_dates: bool = False) -> str:
+        """Open a vault link after unlock and return the redacted page text.
+
+        When to use: when the user (or the bot, for the user) follows a link
+        in a report. Every open is logged with the requesting bot id.
+        """
+        self._check_open()
+        bot_id = _require_bot(bot_id)
+        m = LINK_RE.fullmatch(link or "")
+        if m is None:
+            raise VaultError("not a vault link")
+        row = self._conn.execute(
+            "SELECT r.text FROM files f JOIN records r ON r.file = f.file"
+            " WHERE f.record_id = ? AND r.page = ?",
+            (m.group("rid"), int(m.group("page"))),
+        ).fetchone()
+        if row is None:
+            raise VaultError("no such record page")
+        self._log(
+            bot_id,
+            "link_opened",
+            {"record_id": m.group("rid"), "page": int(m.group("page"))},
+        )
+        return local_search.redact(row[0], keep_dates)[0]
 
     def read_log(self) -> list[dict]:
         """Return the access log entries (no record text is ever stored there).
