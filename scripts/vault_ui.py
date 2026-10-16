@@ -143,6 +143,7 @@ def run_review(report: dict, vault, bot_id: str) -> int:
             for flag in v["flags"]:
                 tk.Label(body, text="Check: " + flag, fg="#a40").pack(anchor="w")
             tk.Label(body, text=v["note"]).pack(anchor="w")
+            tk.Label(body, text=v["names_check"], fg="#a40").pack(anchor="w")
         if v["screen"] == "step":
             tk.Label(body, text=v["question"], font=big).pack(pady=8)
             row = tk.Frame(body)
@@ -171,6 +172,7 @@ def run_review(report: dict, vault, bot_id: str) -> int:
             tk.Button(body, text="Save my text", font=big, command=save).pack()
         elif v["screen"] == "summary":
             tk.Label(body, text="Summary", font=big).pack(anchor="w")
+            tk.Label(body, text=v["names_check"], fg="#a40").pack(anchor="w")
             for r in v["rows"]:
                 line = tk.Frame(body)
                 line.pack(fill="x")
