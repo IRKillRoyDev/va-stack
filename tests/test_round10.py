@@ -74,10 +74,10 @@ def test_nexus_column_never_asserts_link():
     assert cell == "" or cell.startswith(LABEL)
 
 
-def test_nexus_column_carries_label_and_flags():
+def test_nexus_column_blank_without_user_answer():
+    # Replaced by the review step: the tool never fills the nexus on its own.
     form = pi._form_rows("21-526EZ", [ISSUE], [{"label": LABEL, "flags": [FLAG]}])
-    cell = form["rows"][0][NEXUS]
-    assert cell.startswith(LABEL) and FLAG in cell
+    assert form["rows"][0][NEXUS] == ""
 
 
 @pytest.mark.parametrize("name", ["21-526EZ", "21-0966", "20-0995", "10182"])
@@ -97,7 +97,7 @@ def test_report_form_and_rows_carry_note(vault):
     assert form["label"] == LABEL
     for row, rn in zip(form["rows"], form["row_notes"]):
         assert rn["note"] == NOTE
-        assert row[NEXUS].startswith(LABEL)
+        assert row[NEXUS] == ""  # unreviewed: blank for the user
     skin = rep["cited_report"][0]
     assert set(skin["flags"]) <= set(form["row_notes"][0]["flags"])
 
