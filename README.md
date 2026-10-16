@@ -33,7 +33,7 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 7. **claim-submission guardrails present:** the skill contains "never submits", "Step 0: Ask which track", "Track B2", "Track C", "Track A2", "PEBLO", "§20.202", and "§3.155".
 8. **SAFETY.md disclaimer present:** SAFETY.md exists and contains "Not legal or medical advice", "No filing", "VA-accredited", the AI-service processing note, and the Veterans Crisis Line; no Markdown file makes a privacy, compliance, or retention overclaim (phrases listed in `ci.yml`).
 9. **No rating predictions rule present:** condition-map, claim-citations, and claim-submission each keep their no-prediction rule.
-10. **Lint and tests** (job `python`): `pip install -r requirements-dev.txt` (pinned pypdf, pytest, ruff, flake8), then `ruff check .`, `ruff format --check .`, `flake8 .`, and `pytest -q`. `tests/test_local_search.py` checks redaction of every identifier kind, the per-term and total caps, `--dry-run` counts-only output, in-memory PDF extraction, and that no socket is opened (socket creation is patched to raise).
+10. **Lint and tests** (job `python`): `pip install -r requirements-dev.txt` (pinned pypdf, pytest, ruff, flake8), then `ruff check .`, `ruff format --check .`, `flake8 .`, and `pytest -q`. `tests/test_local_search.py` checks redaction of every identifier kind, the per-term and total caps, `--dry-run` counts-only output, in-memory PDF extraction, and that no socket is opened (socket creation is patched to raise). `tests/test_hardening.py` holds the red-team regression tests (redaction before windowing, SSN separator and invisible-character variants, old dates, addresses, phones, redacted terms and file names, line-split identifiers, and the SAFETY/CI wording checks).
 
 ## Local search script
 
@@ -41,6 +41,7 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 pip install -r requirements.txt
 python3 scripts/local_search.py "/path/to/records" -t "tinnitus" -t "lumbar" --dry-run
 python3 scripts/local_search.py "/path/to/records" -t "tinnitus" --max-hits-per-term 20 --max-total 100 --context 80
+python3 scripts/local_search.py "/path/to/records" -t "separation" --keep-dates  # keep exact old dates
 ```
 
 Runs on the user's own computer, makes no network calls, and writes nothing to disk. Output is redacted JSON for the user to review before sharing.

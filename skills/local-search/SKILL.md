@@ -18,7 +18,7 @@ The bot's AI service processes any text the bot reads. This skill keeps that to 
    `python3 scripts/local_search.py "<folder>" -t "<term>" -t "<term>" --dry-run`
    It prints counts only (files searched, matches per term, hits per file). No record text.
 3. Show the counts. Agree on terms and caps (`--max-hits-per-term`, default 20; `--max-total`, default 100; `--context`, default 80 characters each side).
-4. Ask the user to run the same command without `--dry-run`. Output is JSON: `file`, `page`, `line`, `term`, `context`. SSNs, dates of birth, phone numbers, emails, street addresses, VA file numbers and DoD ID numbers are replaced with `[REDACTED-<KIND>]` before printing.
+4. Ask the user to run the same command without `--dry-run`. Output is JSON: `file`, `page`, `line`, `term`, `context`. SSNs, dates of birth, phone numbers, emails, street addresses, VA file numbers and DoD ID numbers are replaced with `[REDACTED-<KIND>]` (labels such as `DOB:` are kept). Each whole page is redacted before it is searched, and search terms and file names in the output are redacted too. Full dates 17 or more years old are shown as `[DATE-YYYY]` because they may be birth dates; old service or onset dates then show the year only. If the user needs exact old dates, they can rerun with `--keep-dates` and check those snippets by hand (labeled dates of birth stay redacted). Names, including third-party names, are not redacted.
 5. The user reviews the snippet list and removes anything they do not want shared. Only the snippets the user approves may be pasted to the bot.
 6. A whole page may be read only if the user explicitly approves that specific file and page, after being told its text goes to the AI service.
 
@@ -26,7 +26,7 @@ The bot's AI service processes any text the bot reads. This skill keeps that to 
 
 - No approval of the snippet list → stop; read nothing.
 - Never read a whole file or page without explicit approval for that page.
-- Redaction is pattern-based and can miss things. Ask the user to check every snippet before approving it.
+- Redaction is pattern-based and can miss things, and names are never redacted. Ask the user to check every snippet before approving it.
 - Never run the script on a folder inside a git repository or a public sync folder.
 
 ## Output template
