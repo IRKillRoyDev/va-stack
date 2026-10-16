@@ -103,8 +103,9 @@ jobs:
           python3 --version
           python3 -m venv .venv
           source .venv/bin/activate
-          python -m pip install -r requirements.txt
+          python -m pip install -e .
           python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
+          va-stack --help
           python -m pip install -r requirements-dev.txt
       - name: Vault opens encrypted (SQLCipher, not plain sqlite3)
         shell: bash
@@ -134,9 +135,11 @@ jobs:
           py --version
           py -m venv .venv
           .venv\Scripts\Activate.ps1
-          python -m pip install -r requirements.txt
+          python -m pip install -e .
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          va-stack --help
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python -m pip install -r requirements-dev.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }

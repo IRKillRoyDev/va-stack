@@ -3,5 +3,6 @@ pypdf==5.1.0
 # "sqlcipher3" module with a bundled, statically linked SQLCipher; there is
 # no fallback to plain sqlite3 (records_vault.py refuses to run without it).
 sqlcipher3-binary==0.6.0; sys_platform == "linux"
-sqlcipher3==0.6.4; sys_platform == "darwin" or sys_platform == "win32"
+sqlcipher3>=0.6.4; sys_platform == "darwin"
+sqlcipher3==0.6.4; sys_platform == "win32"
 argon2-cffi==25.1.0
