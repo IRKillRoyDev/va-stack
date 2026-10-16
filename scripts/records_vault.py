@@ -775,7 +775,8 @@ class Vault:
         self, link: str, quote: str, expected: str, bot_id: str
     ) -> bool:
         """True only if quote is in the record page before redaction AND the
-        whole sentence(s) it sits in redact to `expected`.
+        whole sentence(s) it sits in redact to `expected`. A quote that
+        contains redacted text is compared only in its redacted form.
 
         When to use: only by proposed_issues.cite_quote(); not public API.
         Refuses quotes under MIN_CHECK_QUOTE characters, answers False the
@@ -799,8 +800,18 @@ class Vault:
                 " WHERE f.record_id = ? AND r.page = ?",
                 (m.group("rid"), int(m.group("page"))),
             ).fetchone()
+        # A quote whose redacted form has a [REDACTED-*] tag is compared
+        # only in redacted form, so the check cannot be used to test guesses
+        # of a hidden SSN, date or name. Untagged quotes are compared raw.
+        red_q = " ".join(local_search.redact(q)[0].split())
+        tagged = "[REDACTED-" in red_q
+        if tagged:
+            q = red_q
         if row is not None:
-            units = local_search.split_sentences(local_search.strip_invisible(row[0]))
+            page = local_search.strip_invisible(row[0])
+            if tagged:
+                page = local_search.redact(page)[0]
+            units = local_search.split_sentences(page)
             flat = " ".join(units)
             pos = flat.find(q)
             if pos != -1:
@@ -811,7 +822,8 @@ class Vault:
                 first = max(k for k, st in enumerate(starts) if st <= pos)
                 last = max(k for k, st in enumerate(starts) if st < pos + len(q))
                 cited = " ".join(units[slice(first, last + 1)])
-                red = " ".join(local_search.redact(cited)[0].split())
+                red = cited if tagged else local_search.redact(cited)[0]
+                red = " ".join(red.split())
                 found = red == " ".join((expected or "").split())
         self._log(
             bot_id,

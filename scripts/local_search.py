@@ -50,45 +50,155 @@ _MBI_AN = r"[AC-HJKMNP-RT-Y0-9]"
 _MBI_SEP = r"(?:[-\u2010-\u2015\u2212._/]| {1,2})?"
 
 # ---- labeled names -------------------------------------------------------
-# Labels are matched in any case (including ALL CAPS). After ":", "-", an
-# en/em dash, a fullwidth colon, or a line break the name may be in any
-# case; after plain whitespace it must be Title Case. A name is up to four
-# words: capitalized words (Mc/Mac/O'/hyphenated included), middle initials
-# such as "Q.", or "Last, First". Common words such as "not" or "denies"
-# are never taken as a name, so redaction cannot hide a negation.
-_NAME_LABELS = (
-    r"(?i:name|patient|veteran|claimant|pt|spouse|dependent|beneficiary"
-    r"|examiner|provider|signed(?:[ \t]+by)?)"
+# A label (any case, ALL CAPS included) such as Name, Patient, Pt, Veteran,
+# Claimant, Spouse, Dependent, Beneficiary, Examiner, Provider, Signed (by),
+# "Patient's name", "Name of veteran", "Last name", or a title (Mr, Mrs, Ms,
+# Mx, Dr), then a separator (":", "-", en/em dash, fullwidth colon, "=",
+# ".", "|", a line break, "is", or plain whitespace), then the name. Letters
+# are Unicode letters (Ñoño, Zoë, Élodie). A name is up to five words:
+# capitalized or ALL CAPS words (Mc/Mac/O'/hyphenated included), initials
+# ("Q" or "Q."), particles (de, la, van, von, del, da, st, ...), suffixes
+# (Jr., Sr., II, III), or "Last, First". After plain whitespace or a title
+# without a period the name must be capitalized. A negation or common word
+# ("not", "denies", "it") is never swallowed as a name; a capitalized word
+# after it ("Not Fakename") is still redacted.
+_NAME_ROLES = r"patient|veteran|claimant|spouse|dependent|beneficiary|examiner|provider"
+_NAME_LABEL = re.compile(
+    r"(?<![^\W_])(?:"
+    rf"(?:{_NAME_ROLES})(?:['\u2019]s)?[ \t]+name"
+    rf"|name[ \t]+of[ \t]+(?:the[ \t]+)?(?:{_NAME_ROLES})"
+    r"|(?:last|first|middle|full|given|family)[ \t]+name"
+    rf"|name|pt|{_NAME_ROLES}|signed(?:[ \t]+by)?"
+    r")(?![^\W_])"
+    r"(?P<sep>[ \t]*(?:[:\-\u2013\u2014\uff1a=.|][ \t]*(?:\n[ \t]*)?|\n[ \t]*)"
+    r"|[ \t]+is[ \t]+|[ \t]+)",
+    re.IGNORECASE,
 )
-_NAME_STOP = (
-    r"(?!(?i:not|no|never|den\w*|none|neither|unlikely|negative|is|was|are"
-    r"|were|has|had|have|the|a|an|and|or|of|to|in|on|reports?|reported|states?"
-    r"|stated|notes?|noted|says?|said|found|finds|agrees?|disagrees?|seen"
-    r"|reviewed|ssn|dob|mbi|n/a|na|unknown|it|he|she|they|this|that|these"
-    r"|those|there|we|i|you|his|her|their|less|more|likely|at|as|be|by|for"
-    r"|with|without|from|may|might|can|could|would|should|will|confirms?"
-    r"|refused|declined|present|absent|normal|see|per)\b)"
+_NAME_TITLE_LABEL = re.compile(
+    r"(?<![^\W_])(?:Mr|Mrs|Ms|Mx|Dr|MR|MRS|MS|MX|DR)(?P<sep>\.[ \t]*|[ \t]+)"
 )
-_NAME_TOK = r"(?:[A-Z]\.|[A-Z][A-Za-z'\u2019]*(?:-[A-Z][A-Za-z'\u2019]*)*)"
-_NAME_TITLE_TOK = r"(?:[A-Z]\.|[A-Z][a-z'\u2019]+(?:-[A-Z][a-z'\u2019]+)*)"
-_NAME_LOWER = r"[a-z][a-z'\u2019-]+"
-_NAME_PUNCT = re.compile(
-    rf"(?P<lbl>\b{_NAME_LABELS}[ \t]*(?:[:\-\u2013\u2014\uff1a][ \t]*(?:\n[ \t]*)?"
-    r"|\n[ \t]*))"
-    + _NAME_STOP
-    + rf"(?:{_NAME_TOK}(?:,?[ \t]+{_NAME_STOP}{_NAME_TOK}){{0,3}}"
-    + rf"|{_NAME_LOWER}(?:[ \t]+{_NAME_STOP}{_NAME_LOWER})?)"
+_NAME_WORD = re.compile(r"[^\W\d_](?:[^\W\d_]|['\u2019-](?=[^\W\d_]))*\.?")
+_NAME_PARTICLES = frozenset(
+    "de la le du des di da del della dos das van von der den ter st st. y bin"
+    " ibn al el".split()
 )
-_NAME_SPACE = re.compile(
-    rf"(?P<lbl>\b{_NAME_LABELS}[ \t]+)"
-    + _NAME_STOP
-    + rf"{_NAME_TITLE_TOK}(?:[ \t]+{_NAME_STOP}{_NAME_TITLE_TOK}){{0,2}}"
+_NAME_SUFFIXES = frozenset("jr jr. sr sr. ii iii iv".split())
+_NAME_STOPWORDS = frozenset(
+    """not no never none neither nor nothing denies denied deny without unlikely
+    negative cannot can't isn't doesn't don't won't wasn't is was are were be
+    been has had have the a an and or of to in on at as by for with from may
+    might can could would should will reports reported report states stated
+    notes noted says said found finds agrees agree disagrees seen reviewed
+    ssn dob mbi n/a na unknown it he she they this that these those there we
+    i you his her their less more likely confirms confirm refused declined
+    present absent normal see per first last middle name date age sex male
+    female phone address email file number id dod va dc""".split()
 )
-_NAME_TITLE = re.compile(
-    r"(?P<lbl>\b(?:Mr|Mrs|Ms|Dr|MR\.|MRS\.|MS\.|DR\.)\.?[ \t]+)"
-    + _NAME_STOP
-    + rf"{_NAME_TOK}(?:[ \t]+{_NAME_STOP}{_NAME_TOK}){{0,2}}"
-)
+
+
+def _name_like(word: str, strict: bool, lower_ok: bool) -> bool:
+    """True when word can be part of a name in this position."""
+    core = word.rstrip(".")
+    if not core:
+        return False
+    if len(core) == 1:
+        return core.isupper()  # an initial
+    if core[0].isupper():
+        return True
+    return lower_ok and not strict
+
+
+class _NameRule:
+    """Labeled-name redaction (regex-like: has sub() and subn())."""
+
+    def subn(self, _repl, text: str) -> tuple[str, int]:
+        spans: list[tuple[int, int]] = []
+        pos = 0
+        while True:
+            m = _NAME_LABEL.search(text, pos)
+            t = _NAME_TITLE_LABEL.search(text, pos)
+            if t and (m is None or t.start() < m.start()):
+                m, strict = t, "." not in t.group("sep")
+            elif m is None:
+                break
+            else:
+                sep = m.group("sep")
+                strict = not sep.strip(" \t") or sep.strip() == "is"
+            found = self._take(text, m.end(), strict)
+            spans.extend(found)
+            pos = found[-1][1] if found else m.end()
+        if not spans:
+            return text, 0
+        out, last = [], 0
+        for start, end in spans:
+            out.append(text[slice(last, start)])
+            out.append("[REDACTED-NAME]" + "\n" * text.count("\n", start, end))
+            last = end
+        out.append(text[last:])
+        return "".join(out), len(spans)
+
+    def sub(self, repl, text: str) -> str:
+        return self.subn(repl, text)[0]
+
+    @staticmethod
+    def _take(text: str, pos: int, strict: bool) -> list[tuple[int, int]]:
+        spans: list[tuple[int, int]] = []
+        start = end = None
+        words = 0
+        lower_name = None
+        pending: list[tuple[int, int]] = []
+        i = pos
+        while words < 5:
+            gap = re.match(r",?[ \t]+" if words else "", text[i:])
+            j = i + (gap.end() if gap else 0)
+            w = _NAME_WORD.match(text, j)
+            if not w:
+                break
+            word = w.group(0)
+            low = word.lower()
+            if words == 0 and lower_name is None:
+                lower_name = word[0].islower()
+            if low in _NAME_STOPWORDS or "n't" in low:
+                if start is not None:
+                    spans.append((start, end))
+                    start = None
+                gap_ch = text[slice(w.end(), w.end() + 1)]
+                nxt = None
+                if gap_ch in (" ", "\t"):
+                    nxt = _NAME_WORD.match(text, w.end() + 1)
+                if (
+                    spans
+                    and nxt
+                    and nxt.group(0)[0].isupper()
+                    and nxt.group(0).lower() not in _NAME_STOPWORDS
+                ):
+                    i = w.end()
+                    continue
+                break
+            if low in _NAME_PARTICLES and words:
+                pending.append((j, w.end()))
+                i = w.end()
+                continue
+            if low in _NAME_SUFFIXES and words:
+                end, i = w.end(), w.end()
+                continue
+            if not _name_like(word, strict, bool(lower_name)):
+                break
+            if word.endswith(".") and len(word.rstrip(".")) > 1:
+                w_end = w.end() - 1  # keep a sentence-ending period
+            else:
+                w_end = w.end()
+            if start is None:
+                start = j
+            pending = []
+            end, i = w_end, w_end
+            words += 1
+        if start is not None:
+            spans.append((start, end))
+        return spans
+
+
+_NAME_RULE = _NameRule()
 
 # Order matters: labeled identifiers first, then generic number shapes.
 REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
@@ -183,9 +293,7 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     # Labeled names (see _NAME_* below). Names without a label are NOT
     # redacted. These run after ADDRESS so a street suffix "Dr" is handled
     # there first.
-    ("NAME", _NAME_PUNCT),
-    ("NAME", _NAME_SPACE),
-    ("NAME", _NAME_TITLE),
+    ("NAME", _NAME_RULE),
 ]
 
 

@@ -178,11 +178,8 @@ def test_clean_still_clean():
 @pytest.mark.parametrize(
     "page,quote",
     [
-        (
-            "Veteran SSN 123-45-6789 reports that tinnitus is related to military"
-            " noise exposure.",
-            "Veteran SSN 999-88-7777 reports that tinnitus is related",
-        ),
+        # A different SSN is no longer refused: tagged quotes are compared
+        # only in redacted form (round 12, no guess-the-SSN oracle).
         (
             "Seen 03/14/1961 and tinnitus is related to military noise exposure.",
             "Seen 12/25/1961 and tinnitus is related to military",

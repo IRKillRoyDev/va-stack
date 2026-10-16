@@ -179,7 +179,7 @@ def test_session_confirm_all_uses_token(vault):
     s = rs.ReviewSession(rep)
     for _ in rep["cited_report"]:
         s.press("Yes")
-    s.confirm_all(vault, BOT)
+    s.confirm_all(vault, BOT, phrase=s.confirm_phrase)
     assert reviews(vault) == len(rep["cited_report"])
 
 
@@ -195,7 +195,7 @@ def test_changed_evidence_voids_earlier_answer(vault):
     s = rs.ReviewSession(rep)
     for _ in rep["cited_report"]:
         s.press("Yes")
-    s.confirm_all(vault, BOT)
+    s.confirm_all(vault, BOT, phrase=s.confirm_phrase)
     assert report(vault)["cited_report"][1]["final"] is True
     data = copy.deepcopy(INPUT)
     data["issues"][1]["evidence"] = [
