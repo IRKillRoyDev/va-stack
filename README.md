@@ -10,6 +10,7 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 |---|-------|---------|
 | 1 | [cfr-fetch](skills/cfr-fetch/SKILL.md) | Pull current 38 CFR Parts 3, 4, 14 and 20 from the eCFR API, record the "as of" date |
 | 2 | [local-search](skills/local-search/SKILL.md) | Run `scripts/local_search.py` on the user's computer (no network, in memory) for capped, redacted snippets; the user approves them before anything goes to the AI service |
+| 2b | [records-vault](skills/records-vault/SKILL.md) | Optional: the same search through an encrypted SQLCipher vault on the user's computer, with a consent screen every unlock, bot id on every request, and a hash-chained access log |
 | 3 | [records-intake](skills/records-intake/SKILL.md) | Index the user's local private records by file, page, date |
 | 4 | [condition-map](skills/condition-map/SKILL.md) | Map diagnoses to Part 4 diagnostic codes and Part 3 bases; name what is shown vs missing |
 | 5 | [claim-citations](skills/claim-citations/SKILL.md) | Build the cited claim table; drop rows lacking a CFR cite AND a record cite |
@@ -45,3 +46,16 @@ python3 scripts/local_search.py "/path/to/records" -t "separation" --keep-dates 
 ```
 
 Runs on the user's own computer, makes no network calls, and writes nothing to disk. Output is redacted JSON for the user to review before sharing.
+
+## Encrypted vault (optional)
+
+```
+pip install -r requirements.txt
+python3 scripts/records_vault.py init records.db
+python3 scripts/records_vault.py ingest records.db "/path/to/records" --bot-id <id>
+python3 scripts/records_vault.py search records.db --bot-id <id> -t "tinnitus"
+python3 scripts/records_vault.py verify records.db --bot-id <id>
+python3 scripts/vault_ui.py records.db --bot-id <id>
+```
+
+Each command shows the consent-to-share notice, then prompts for the password locally. `tests/test_vault.py` covers wrong password, tampered or deleted log entries, no consent, consent every session, missing bot id, no snippet text in the log, key zeroized after close, and no network use.

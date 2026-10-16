@@ -7,6 +7,8 @@ description: Search the user's local records folder on their own computer with s
 
 Use this before records-intake and condition-map read any record text.
 
+If the user keeps records in the encrypted vault, run the same search through [records-vault](../records-vault/SKILL.md) instead; redaction and caps are the same.
+
 ## Why
 
 The bot's AI service processes any text the bot reads. This skill keeps that to the smallest set of snippets the user has approved. The script itself runs on the user's computer, makes no network calls, and writes nothing to disk.
