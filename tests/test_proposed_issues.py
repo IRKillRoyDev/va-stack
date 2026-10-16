@@ -245,7 +245,11 @@ def test_link_open_is_logged_and_redacted(vault):
 def test_quotes_in_report_are_redacted(vault):
     data = copy.deepcopy(INPUT)
     data["issues"][1]["evidence"].append(
-        {"file": "identifiers-fake.txt", "page": 1, "quote": "SSN 000-12-3456"}
+        {
+            "file": "identifiers-fake.txt",
+            "page": 1,
+            "quote": "Patient: Pat Example (fictional)  SSN 000-12-3456",
+        }
     )
     rep = pi.build_report(data, vault, bot_id=BOT)
     assert "000-12-3456" not in json.dumps(rep)

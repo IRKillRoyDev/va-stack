@@ -32,6 +32,7 @@ import secrets
 import sys
 import unicodedata
 import uuid
+import weakref
 from pathlib import Path
 
 import sqlcipher3
@@ -132,12 +133,40 @@ def derive_key(password: bytearray, header: dict) -> bytearray:
     return bytearray(raw)
 
 
-# Gate state lives here, not on the gate object, so setting attributes on a
-# gate (or passing a look-alike object) cannot forge or reuse consent.
-_ACKED: "set[int]" = set()
-_SPENT: "set[int]" = set()
-_LIVE: "dict[int, object]" = {}
-_TOKENS: "set[int]" = set()
+def _make_registry():
+    """Hold consent and open-token state inside a closure.
+
+    When to use: once, at import. Nothing here is a module attribute, so
+    importing code cannot add an id to a set to forge consent. Limit: code in
+    the same Python process can still reach closure cells with
+    introspection; the real gate is the human-only UI or a real terminal.
+    """
+    gates: dict[int, list] = {}  # id -> [weakref, acknowledged, spent]
+    tokens: dict[int, object] = {}
+
+    def register(gate) -> None:
+        gates[id(gate)] = [weakref.ref(gate), False, False]
+        weakref.finalize(gate, gates.pop, id(gate), None)
+
+    def state(gate) -> list | None:
+        entry = gates.get(id(gate))
+        if entry is None or entry[0]() is not gate:
+            return None
+        return entry
+
+    def new_token() -> object:
+        token = object()
+        tokens[id(token)] = token
+        return token
+
+    def take_token(token) -> bool:
+        return token is not None and tokens.pop(id(token), None) is token
+
+    return register, state, new_token, take_token
+
+
+_register_gate, _gate_state, _new_token, _take_token = _make_registry()
+del _make_registry
 
 
 class ConsentGate:
@@ -151,32 +180,30 @@ class ConsentGate:
     __slots__ = ("__weakref__",)
 
     def __init__(self) -> None:
-        _LIVE[id(self)] = self
+        _register_gate(self)
 
     @property
     def acknowledged(self) -> bool:
-        return id(self) in _ACKED
+        st = _gate_state(self)
+        return bool(st and st[1])
 
     @property
     def used(self) -> bool:
-        return id(self) in _SPENT
+        st = _gate_state(self)
+        return st is None or st[2]
 
     def acknowledge(self) -> None:
         """Record that the user ticked the consent box this session."""
-        if id(self) not in _SPENT:
-            _ACKED.add(id(self))
+        st = _gate_state(self)
+        if st is not None and not st[2]:
+            st[1] = True
 
     def consume(self) -> None:
         """Spend the consent on one unlock; raise if missing or reused."""
-        if (
-            type(self) is not ConsentGate
-            or _LIVE.get(id(self)) is not self
-            or id(self) not in _ACKED
-            or id(self) in _SPENT
-        ):
+        st = _gate_state(self) if type(self) is ConsentGate else None
+        if st is None or not st[1] or st[2]:
             raise ConsentRequired("consent to share is required for each unlock")
-        _SPENT.add(id(self))
-        _ACKED.discard(id(self))
+        st[1], st[2] = False, True
 
 
 class UnlockFlow:
@@ -206,7 +233,7 @@ class UnlockFlow:
             raise ConsentRequired("tick consent before entering the password")
         gate = self._gate
         self._gate = ConsentGate()  # never hand the spent gate back
-        _SPENT.add(id(self._gate))  # a flow unlocks once; make a new flow
+        _gate_state(self._gate)[2] = True  # a flow unlocks once; make a new flow
         return Vault.open(self.db_path, password, gate)
 
 
@@ -261,6 +288,8 @@ def create_vault(
     if weak and not insecure_test_kdf:
         zeroize(password)
         raise VaultError(f"Argon2id parameters below minimum: {', '.join(weak)}")
+    if weak:
+        header["insecure_test_kdf"] = True  # signed below; tests only
     if bots is not None:
         header["bots"] = sorted({_normalize_bot(b) for b in bots})
     key = derive_key(password, header)
@@ -269,6 +298,7 @@ def create_vault(
         conn = _connect(db_path, key)
         conn.executescript(SCHEMA)
         conn.close()
+        header["mac"] = _header_mac(key, header)
     finally:
         zeroize(key)
     header_path(db_path).write_text(json.dumps(header, indent=2) + "\n")
@@ -296,6 +326,33 @@ def _entry_hash(prev_hash: str, fields: dict, mac_key: bytearray) -> str:
     """
     body = json.dumps(fields, sort_keys=True, separators=(",", ":"))
     return hmac.new(bytes(mac_key), (prev_hash + body).encode(), "sha256").hexdigest()
+
+
+def _header_mac(key: bytearray, header: dict) -> str:
+    """HMAC over the whole KDF header (salt, Argon2id settings, bots, flags).
+
+    When to use: when writing the header and right after deriving the key at
+    unlock. The header stays readable before unlock (it holds the salt and
+    settings needed to derive the key) but cannot be edited unnoticed.
+    """
+    body = {k: v for k, v in header.items() if k != "mac"}
+    msg = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    sub_key = hkdf(key, b"va-stack kdf-header v1")
+    try:
+        return hmac.new(bytes(sub_key), msg, "sha256").hexdigest()
+    finally:
+        zeroize(sub_key)
+
+
+def _check_kdf_floor(header: dict) -> None:
+    """Refuse Argon2id settings below MIN_KDF unless the signed test flag is set.
+
+    When to use: before deriving a key at unlock. The flag is only trusted
+    because the header MAC is checked right after derivation.
+    """
+    weak = [k for k, v in MIN_KDF.items() if int(header.get(k, 0)) < v]
+    if weak and header.get("insecure_test_kdf") is not True:
+        raise VaultError(f"Argon2id parameters below minimum: {', '.join(weak)}")
 
 
 def head_path(db_path: Path) -> Path:
@@ -343,9 +400,8 @@ class Vault:
     """
 
     def __init__(self, conn, key: bytearray, token=None, db_path=None, header=None):
-        if token is None or id(token) not in _TOKENS:
+        if not _take_token(token):
             raise ConsentRequired("open the vault with Vault.open() after consent")
-        _TOKENS.discard(id(token))
         self._conn = conn
         self._key = key
         self._db_path = Path(db_path)
@@ -366,6 +422,7 @@ class Vault:
                 raise ConsentRequired("consent to share is required for each unlock")
             consent.consume()
             header = json.loads(header_path(db_path).read_text())
+            _check_kdf_floor(header)
             key = derive_key(password, header)
         finally:
             zeroize(password)
@@ -374,10 +431,15 @@ class Vault:
         except WrongPassword:
             zeroize(key)
             raise
+        mac = header.get("mac")
+        if not isinstance(mac, str) or not hmac.compare_digest(
+            _header_mac(key, header), mac
+        ):
+            conn.close()
+            zeroize(key)
+            raise VaultError("KDF header was changed or is unsigned; refusing to open")
         conn.executescript(SCHEMA)
-        token = object()
-        _TOKENS.add(id(token))
-        return cls(conn, key, token, db_path, header)
+        return cls(conn, key, _new_token(), db_path, header)
 
     def _check_open(self) -> None:
         if self._conn is None:
@@ -574,7 +636,43 @@ class Vault:
             out.append(entry)
         return out
 
-    def verify_log(self, bot_id: str | None = None) -> bool:
+    def export_head(self, dest: Path) -> Path:
+        """Write a copy of the signed log head for the user to keep elsewhere.
+
+        When to use: at the end of a session; keep the file on other media.
+        verify_log(external_head=...) then also catches rolling back the
+        database and its head file together to before the export.
+        """
+        self._check_open()
+        row = self._conn.execute(
+            "SELECT seq, hash FROM access_log ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+        count, last = (row[0], row[1]) if row else (0, GENESIS)
+        dest = Path(dest)
+        dest.write_text(
+            json.dumps(
+                {"count": count, "last": last, "mac": self._head_mac(count, last)}
+            )
+        )
+        return dest
+
+    def _matches_external(self, path: Path) -> bool:
+        """True if the exported head is signed and is part of the current chain."""
+        try:
+            head = json.loads(Path(path).read_text())
+            count, last, mac = int(head["count"]), str(head["last"]), str(head["mac"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        if not hmac.compare_digest(self._head_mac(count, last), mac):
+            return False
+        if count == 0:
+            return True
+        row = self._conn.execute(
+            "SELECT hash FROM access_log WHERE seq = ?", (count,)
+        ).fetchone()
+        return row is not None and hmac.compare_digest(row[0], last)
+
+    def verify_log(self, bot_id: str | None = None, external_head=None) -> bool:
         """Recompute the HMAC chain and check the head outside the database.
 
         False if any entry was edited, removed, or truncated, or the database
@@ -586,6 +684,8 @@ class Vault:
         """
         self._check_open()
         ok = self._verify_chain()
+        if ok and external_head is not None:
+            ok = self._matches_external(external_head)
         if bot_id is not None:
             self._log(self._bot(bot_id), "verify", {"log_valid": ok})
         return ok

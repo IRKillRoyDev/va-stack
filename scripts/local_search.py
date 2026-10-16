@@ -111,7 +111,10 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
             r"(?P<lbl>(?P<c>,[ \t]*)|\b[A-Z][a-z]+[ \t]+|^[ \t]*)"
             rf"(?(c)(?i:{STATES})|(?:{STATES}))\b[ \t]*,?[ \t]*"
             r"\d{5}(?:-\d{4})?(?!\d)"
-            r"(?=[ \t]*(?:$|[^\w\s]|(?:USA|U\.S\.A?\.?|United States)\b))",
+            r"(?=[ \t]*(?:$|[^\w\s]|(?:USA|U\.S\.A?\.?|United States)\b)"
+            # or a connecting word ("Austin TX 78701 with spouse"); counts such
+            # as "OK 12345 today" stay unredacted.
+            r"|[ \t]+(?:with|and|since|until|near|where|while|from)\b)",
             re.MULTILINE,
         ),
     ),
@@ -135,12 +138,20 @@ BIRTH_LABEL = re.compile(
     + r"|b\.(?=\s*[(\[]?\d))(?![A-Za-z])",
     re.IGNORECASE,
 )
+# Ordinal day words ("the fourteenth of March, 1961").
+ORD_WORDS = (
+    r"(?:(?:twenty|thirty)[\s-]?)?(?:first|second|third|fourth|fifth|sixth"
+    r"|seventh|eighth|ninth)|tenth|eleventh|twelfth|thirteenth|fourteenth"
+    r"|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth"
+)
 # Any date-like value, including space-separated numeric dates and prose
 # such as "March of 1961, the 14th" (only redacted next to a birth label).
 DATE_LIKE = re.compile(
     r"(?<!\d)(?:" + DATE_VALUE + r"|\d{1,2}\s\d{1,2}\s\d{2,4}(?!\d)"
     r"|\d{4}\s\d{1,2}\s\d{1,2}(?!\d)"
-    rf"|\b{MONTHS}\s+(?:of\s+)?\d{{4}}(?:,?\s+the\s+\d{{1,2}}{ORD}\b)?)",
+    rf"|(?:\b(?:the\s+)?(?:{ORD_WORDS}|\d{{1,2}}{ORD})\s+(?:day\s+)?of\s+)?"
+    rf"\b{MONTHS},?\s+(?:of\s+)?\d{{4}}(?:,?\s+the\s+\d{{1,2}}{ORD}\b)?"
+    rf"|\b{MONTHS}\s+\d{{1,2}}{ORD},?\s+['\u2019]\d{{2}}(?!\d))",
     re.IGNORECASE,
 )
 BIRTH_WINDOW = 80  # a date may start this many characters after a label
@@ -238,7 +249,7 @@ def _date_tag(m: re.Match[str]) -> str:
 
 # An explicit part/serial label right before a number means it is not a phone.
 PART_LABEL = re.compile(
-    r"(?<![A-Za-z])(?:part|p/n|pn|sku|model|serial|s/n|lot|item)"
+    r"(?<![A-Za-z])(?:part|p/n|pn|sku|model|serial|s/n|lot|item|ref)"
     r"(?:\s*(?:no\.?|number|#))?[\s.:#]*$",
     re.IGNORECASE,
 )

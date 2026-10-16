@@ -20,6 +20,8 @@ form-ready issues and an unofficial estimate.
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import importlib.util
 import json
 import re
@@ -56,20 +58,101 @@ def _json(path: Path) -> dict:
     return json.loads(Path(path).read_text())
 
 
+# SHA-256 of the reviewed data files. Changing either file means reviewing
+# it again (verify_forms, check_criteria) and updating this pin in code.
+MANIFEST = {
+    "forms.json": "04fc6e4593948a1476aa358387a627b708e8f95f1bbf40f6c76578a7845a1c80",
+    "rating-criteria.json": "3722e0c60626fcbfd84ccfd719f2647302b5e0319bf6d723a6ae3b38e629ad6a",  # noqa: E501
+}
+
+
+def check_manifest(name: str | None = None) -> None:
+    """Raise ValueError if a pinned data file differs from its reviewed hash.
+
+    When to use: on every load (load_forms, load_criteria), so a tampered
+    file is refused before it can shape a form row or an estimate.
+    """
+    for fname in [name] if name else MANIFEST:
+        digest = hashlib.sha256((SKILL_DIR / fname).read_bytes()).hexdigest()
+        if digest != MANIFEST[fname]:
+            raise ValueError(f"manifest mismatch for {fname}: refusing to use it")
+
+
 def load_forms() -> dict:
-    """Load the verified form templates.
+    """Load the verified form templates (manifest-checked).
 
     When to use: to map a track to its form and columns.
     """
+    check_manifest("forms.json")
     return _json(SKILL_DIR / "forms.json")
 
 
 def load_criteria() -> dict:
-    """Load the structured Part 4 rating factors.
+    """Load the structured Part 4 rating factors (manifest-checked).
 
     When to use: before estimating or analysing gaps.
     """
+    check_manifest("rating-criteria.json")
     return _json(SKILL_DIR / "rating-criteria.json")
+
+
+def _whole_phrase(text: str, phrase: str) -> bool:
+    """True if phrase occurs in text as a whole criterion clause.
+
+    A clause starts at a capital letter or number, or right after "or"/"or,"
+    or a semicolon; it ends at a semicolon, period, or the next "or"/"and",
+    a level number, or a capitalized heading. This rejects quotes that cut a
+    criterion short or start mid-phrase (cherry-picking), and matches inside
+    a longer word (e.g. "favorable" inside "Unfavorable").
+    """
+    if not phrase.strip():
+        return False
+    start = text.find(phrase)
+    while start != -1:
+        end = start + len(phrase)
+        before = text[:start]
+        ok_start = start == 0 or (
+            before[-1].isspace()
+            and (
+                phrase[0].isupper()
+                or phrase[0].isdigit()
+                or re.search(r"(?:\bor,?|\band|;)\s*$", before) is not None
+            )
+        )
+        after = text[slice(end, end + 8)]
+        ok_end = (
+            after == ""
+            or after[0] in ";.,"
+            or re.match(r"\s+(?:\d|or\b|and\b|Or\b|Note|[A-Z])", after) is not None
+        )
+        if ok_start and ok_end:
+            return True
+        start = text.find(phrase, start + 1)
+    return False
+
+
+def check_criteria(criteria: dict) -> list[str]:
+    """Return problems: any DC or band cite not a whole clause in the eCFR fixture.
+
+    When to use: on the build path (build_report) and in tests.
+    """
+    sections = load_ecfr()["sections"]
+    problems = []
+    for code, dc in criteria["dcs"].items():
+        text = sections.get(dc.get("section"), {}).get("text", "")
+        if not text:
+            problems.append(f"DC {code}: section {dc.get('section')} not in fixture")
+            continue
+        if not _whole_phrase(text, dc["dc_cite"]):
+            problems.append(f"DC {code}: dc_cite not verbatim in §{dc['section']}")
+        for factor in dc["factors"]:
+            for band in factor["bands"]:
+                if not _whole_phrase(text, band["cite"]):
+                    problems.append(
+                        f"DC {code} {factor['key']} {band['level']}: cite is not a"
+                        f" whole verbatim criterion in §{dc['section']}"
+                    )
+    return problems
 
 
 def load_ecfr() -> dict:
@@ -205,12 +288,19 @@ def _band_level(factor: dict, value) -> int | None:
     return None
 
 
-def estimate(dc: dict, findings: dict) -> tuple[int | str, list[dict]]:
+def estimate(dc: dict | None, findings: dict) -> dict:
     """Estimate the level from documented factors ("at least one of" logic).
 
-    When to use: per issue. Returns INSUFFICIENT when no factor the
-    criteria need is documented, plus the bands that set the level.
+    When to use: per issue. Returns {"estimate", "hits", "notice"}: the
+    estimate is INSUFFICIENT when no factor the criteria need is documented
+    or the DC is not modelled; the notice is always attached.
     """
+    level, hits = _estimate(dc, findings) if dc else (INSUFFICIENT, [])
+    return {"estimate": level, "hits": hits, "notice": ESTIMATE_NOTICE}
+
+
+def _estimate(dc: dict, findings: dict) -> tuple[int | str, list[dict]]:
+    """Level and the bands that set it (no notice; use estimate())."""
     hits = []
     for factor in dc["factors"]:
         if factor["key"] in findings:
@@ -284,6 +374,8 @@ def _form_rows(form_name: str | None, issues: list[dict]) -> dict:
     labels = {c["issue_field"]: c["label"] for c in form["columns"]}
     rows = []
     for issue in issues:
+        _check_date(issue.get("approx_date", ""))
+        _check_decision_date(issue.get("decision_date", ""))
         values = {
             "condition": issue["condition"],
             "in_service_event": issue.get("in_service_event", ""),
@@ -311,25 +403,61 @@ def _form_rows(form_name: str | None, issues: list[dict]) -> dict:
 APPROX_DATE = re.compile(r"(?:0[1-9]|1[0-2])-\d{4}")
 
 
+DECISION_DATE = re.compile(r"(\d{2})-(\d{2})-(\d{4})")
+MIN_YEAR = 1900
+MIN_QUOTE = 20
+
+
 def _check_date(value: str) -> None:
     """Reject anything but MM-YYYY (month and year only) or empty.
 
     When to use: on every approximate date, so a full date (which could be a
-    date of birth) never reaches the form list.
+    date of birth) never reaches the form list. Years run 1900 to today.
     """
-    if value and not APPROX_DATE.fullmatch(value):
+    if not value:
+        return
+    if not APPROX_DATE.fullmatch(value):
         raise ValueError(f"approximate date must be MM-YYYY: {value!r}")
+    month, year = int(value[:2]), int(value[3:])
+    today = datetime.date.today()
+    if not MIN_YEAR <= year <= today.year or (year, month) > (today.year, today.month):
+        raise ValueError(f"approximate date out of range: {value!r}")
+
+
+def _check_decision_date(value: str) -> None:
+    """Reject a VA decision date that is not a real MM-DD-YYYY date, 1900..today.
+
+    When to use: on every decision date before it reaches a review form.
+    """
+    if not value:
+        return
+    m = DECISION_DATE.fullmatch(value)
+    try:
+        day = datetime.date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
+    except (AttributeError, ValueError):
+        raise ValueError(f"decision date must be MM-DD-YYYY: {value!r}") from None
+    if not datetime.date(MIN_YEAR, 1, 1) <= day <= datetime.date.today():
+        raise ValueError(f"decision date out of range: {value!r}")
 
 
 def _check_quote(vault, ev: dict, bot_id: str) -> None:
-    """Reject a quote that is not on the cited record page (redacted text).
+    """Reject a quote that is empty, too short, or not on the cited page.
 
-    When to use: on every evidence item before it is cited. The check reads
-    the page through the vault, so it is logged like any other open.
+    When to use: on every evidence item before it is cited. A quote must be
+    at least MIN_QUOTE characters or a whole line of the page, and must match
+    exactly (case included) on whole-word boundaries in the redacted text.
+    The check reads the page through the vault, so it is logged.
     """
+    quote = " ".join(redact(ev.get("quote") or "")[0].split())
+    if not quote:
+        raise ValueError("empty quote")
     page = vault.open_link(vault.link_for(ev["file"], ev["page"]), bot_id=bot_id)
-    quote = " ".join(redact(ev["quote"])[0].split())
-    if quote not in " ".join(page.split()):
+    lines = {" ".join(ln.split()) for ln in page.splitlines()}
+    if len(quote) < MIN_QUOTE and quote not in lines:
+        raise ValueError(f"quote too short to cite (< {MIN_QUOTE} chars)")
+    flat = " ".join(page.split())
+    pattern = r"(?<!\w)" + re.escape(quote) + r"(?!\w)"
+    if re.search(pattern, flat) is None:
         raise ValueError(f"quote not found on cited page {ev['page']}")
 
 
@@ -339,14 +467,19 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
     When to use: main entry point; `vault` is an unlocked records_vault.Vault.
     """
     criteria = load_criteria()
+    problems = verify_forms() + check_criteria(criteria)
+    if problems:
+        raise ValueError("refusing to build: " + "; ".join(problems))
     ecfr = load_ecfr()
     rows = []
     numeric = []
     for issue in data["issues"]:
-        dc = criteria["dcs"][issue["dc"]]
-        section = ecfr["sections"][dc["section"]]
-        level, hits = estimate(dc, issue.get("findings", {}))
         _check_date(issue.get("approx_date", ""))
+        _check_decision_date(issue.get("decision_date", ""))
+        dc = criteria["dcs"].get(issue["dc"])
+        est = estimate(dc, issue.get("findings", {}))
+        level, hits = est["estimate"], est["hits"]
+        section = ecfr["sections"][dc["section"]] if dc else {}
         for ev in issue["evidence"]:
             _check_quote(vault, ev, bot_id)
         links = [
@@ -369,16 +502,25 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                 "links": links,
                 "estimate": level,
                 "rating_wording": {
-                    "section": dc["section"],
+                    "section": dc["section"] if dc else None,
                     "dc": issue["dc"],
-                    "dc_cite": dc["dc_cite"],
+                    "dc_cite": dc["dc_cite"] if dc else None,
                     "quotes": [h["cite"] for h in hits],
-                    "ecfr_url": section["url"],
-                    "api_url": section["api_url"],
+                    "ecfr_url": section.get("url"),
+                    "api_url": section.get("api_url"),
                     "as_of": ecfr["as_of"],
                 },
-                "gap": gap_analysis(issue["dc"], dc, issue.get("findings", {}), level),
-                "notice": ESTIMATE_NOTICE,
+                "gap": (
+                    gap_analysis(issue["dc"], dc, issue.get("findings", {}), level)
+                    if dc
+                    else {
+                        "at_max": False,
+                        "next_level": None,
+                        "factors": [],
+                        "text": f"DC {issue['dc']} is not modelled; no estimate.",
+                    }
+                ),
+                "notice": est["notice"],
             }
         )
     combined = combine(numeric, data.get("bilateral_pairs") or None)
