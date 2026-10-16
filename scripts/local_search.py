@@ -17,6 +17,7 @@ import io
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 TEXT_SUFFIXES = {".txt", ".md"}
@@ -27,6 +28,22 @@ DEFAULT_MAX_HITS_PER_TERM = 20
 DEFAULT_MAX_TOTAL = 100
 DEFAULT_CONTEXT = 80
 
+MONTHS = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
+ORD = r"(?:st|nd|rd|th)?"
+# Every full-date shape the redactor understands; used by both passes.
+DATE_VALUE = (
+    r"(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}"
+    r"|\d{4}[/.-]\d{1,2}[/.-]\d{1,2}"
+    r"|(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
+    rf"|{MONTHS}\s?\d{{1,2}}{ORD},?\s\d{{2,4}}"
+    rf"|\d{{1,2}}{ORD}[\s-]{MONTHS}[\s,-]*\d{{2,4}})(?!\d)"
+)
+STATES = (
+    "AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS"
+    "|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV"
+    "|WI|WY|PR|GU|VI|AS|MP|AA|AE|AP"
+)
+
 # Order matters: labeled identifiers first, then generic number shapes.
 REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
@@ -36,11 +53,8 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
         "DOB",
         re.compile(
-            r"(?P<lbl>\b(?:DOB|D\.O\.B\.|date of birth|birth ?date|birth|born)\b"
-            r"[\s:#-]*)"
-            r"(?:\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}"
-            r"|[A-Za-z]{3,9}\.? \d{1,2},? \d{4}"
-            r"|\d{1,2} [A-Za-z]{3,9}\.? \d{4})",
+            r"(?P<lbl>\b(?:D\.?\s?O\.?\s?B|date of birth|birth ?date|birth"
+            r"|born(?:\s+on)?)(?![A-Za-z])\.?[\s:=#-]*)" + DATE_VALUE,
             re.IGNORECASE,
         ),
     ),
@@ -63,14 +77,20 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
         "SSN",
         re.compile(
-            r"(?<!\d)\d{3}[\s./-]{1,3}\d{2}[\s./-]{1,3}\d{4}(?!\d)|(?<!\d)\d{9}(?!\d)"
+            r"(?<!\d)\d{3}[\s./_,:-]{1,3}\d{2}[\s./_,:-]{1,3}\d{4}(?!\d)"
+            r"|(?<!\d)\d{9}(?!\d)"
         ),
     ),
     (
         "PHONE",
         re.compile(
             r"\+\d{1,3}(?:[\s.-]?\d{1,4}){2,5}(?!\d)"
-            r"|(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|\b\d{3}[\s.-])?\d{3}[\s.-]\d{4}(?!\d)"
+            r"|(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|(?<![\d-])\d{3}[.-])\d{3}[.-]\d{4}(?!\d)"
+            r"|(?:\+?1[\s.-]?)?\(\d{3}\)\s?\d{3}[\s.-]\d{4}(?!\d)"
+            r"|(?P<lbl>\b(?:tel|phone|ph)\b\.?[\s:#]*)"
+            r"(?:\(?\d{3}\)?[\s.-])?\d{3}[\s.-]\d{4}(?!\d)"
+            r"|(?<![\d.-])\d{3}[.-]\d{4}(?![\d.-])",
+            re.IGNORECASE,
         ),
     ),
     ("VA_FILE", re.compile(r"\bC\s?\d{7,8}\b")),
@@ -79,12 +99,22 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         re.compile(
             r"\b\d{1,6}\s+(?:[A-Z][A-Za-z0-9.]*\s+){1,4}"
             r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr"
-            r"|Court|Ct|Way|Place|Pl|Terrace|Ter|Circle|Cir|Highway|Hwy)\b\.?"
+            r"|Court|Ct|Way|Place|Pl|Terrace|Ter|Circle|Cir|Highway|Hwy"
+            r"|Parkway|Pkwy)\b\.?"
             r"(?:,?\s+(?:Apt|Suite|Unit|#)\s*\w+)?"
             r"|\bP\.?\s?O\.?\s*Box\s*\d+"
-            r"|\b(?:RR|Rural Route)\s*\d+(?:\s+Box\s*\d+)?"
-            r"|(?-i:\b[A-Z]{2})\s+\d{5}(?:-\d{4})?\b",
+            r"|\b(?:RR|Rural Route)\s*\d+(?:\s+Box\s*\d+)?",
             re.IGNORECASE,
+        ),
+    ),
+    (
+        # State + ZIP. Uppercase state after a capitalized city word or a
+        # comma; a lowercase state only right after a comma.
+        "ADDRESS",
+        re.compile(
+            r"(?P<lbl>(?P<c>,[ \t]*)|\b[A-Z][a-z]+[ \t]+)"
+            rf"(?(c)(?i:{STATES})|(?:{STATES}))\b[ \t]*,?[ \t]*"
+            r"\d{5}(?:-\d{4})?(?!\d)"
         ),
     ),
 ]
@@ -94,16 +124,36 @@ INVISIBLE = dict.fromkeys(map(ord, "\u00ad\u200b\u200c\u200d\u2060\ufeff"))
 INVISIBLE.update({c: "-" for c in range(0x2010, 0x2016)})
 INVISIBLE.update({0x2212: "-", 0xFE63: "-", 0xFF0D: "-"})
 INVISIBLE.update({c: " " for c in (0x00A0, 0x2007, 0x202F)})
+STRIP_CATEGORIES = {"Mn", "Cf"}
 
-MONTHS = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
-# Label-free full dates: m/d/yyyy, yyyy-mm-dd, "March 14, 1961", "14 March 1961".
+# Label-free full dates. Each pattern names the year group y (2 or 4 digits).
 DATE_PATTERNS = [
-    re.compile(r"(?<!\d)\d{1,2}[/.-]\d{1,2}[/.-](?P<y>\d{4})(?!\d)"),
+    re.compile(r"(?<!\d)\d{1,2}[/.-]\d{1,2}[/.-](?P<y>\d{4}|\d{2})(?!\d)"),
     re.compile(r"(?<!\d)(?P<y>\d{4})[/.-]\d{1,2}[/.-]\d{1,2}(?!\d)"),
-    re.compile(rf"\b{MONTHS} \d{{1,2}},? (?P<y>\d{{4}})\b", re.IGNORECASE),
-    re.compile(rf"\b\d{{1,2}} {MONTHS},? (?P<y>\d{{4}})\b", re.IGNORECASE),
+    re.compile(
+        r"(?<!\d)(?P<y>(?:19|20)\d{2})(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?!\d)"
+    ),
+    re.compile(
+        rf"\b{MONTHS}\s?\d{{1,2}}{ORD},?\s(?P<y>\d{{4}}|\d{{2}})(?!\d)", re.IGNORECASE
+    ),
+    re.compile(
+        rf"\b\d{{1,2}}{ORD}[\s-]{MONTHS}[\s,-]*(?P<y>\d{{4}}|\d{{2}})(?!\d)",
+        re.IGNORECASE,
+    ),
 ]
 BIRTH_YEAR_MAX_AGE_GAP = 17  # dates this many or more years old may be a birth date
+
+
+def _full_year(text: str) -> int:
+    """Turn a 2- or 4-digit year into a 4-digit year.
+
+    When to use: for date matches; 2-digit years up to this year mean 20xx.
+    """
+    year = int(text)
+    if len(text) == 2:
+        this = datetime.date.today().year
+        year += 2000 if year <= this % 100 else 1900
+    return year
 
 
 def _date_tag(m: re.Match[str]) -> str:
@@ -111,7 +161,7 @@ def _date_tag(m: re.Match[str]) -> str:
 
     When to use: as the replacement callback for DATE_PATTERNS.
     """
-    year = int(m.group("y"))
+    year = _full_year(m.group("y"))
     if year > datetime.date.today().year - BIRTH_YEAR_MAX_AGE_GAP:
         return m.group(0)
     return f"[DATE-{year}]"
@@ -142,6 +192,9 @@ def redact(text: str, keep_dates: bool = False) -> tuple[str, dict[str, int]]:
     """
     counts: dict[str, int] = {}
     text = text.translate(INVISIBLE)
+    text = "".join(
+        ch for ch in text if unicodedata.category(ch) not in STRIP_CATEGORIES
+    )
     for kind, pattern in REDACTIONS:
         text, n = pattern.subn(_tag(kind), text)
         if n:
