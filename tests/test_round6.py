@@ -155,7 +155,7 @@ def test_safety_states_password_holder_limit():
 
 # ---- 2/3. pinned manifest, criteria checks, forms on build path -------
 def test_manifest_pins_both_files():
-    assert set(pi.MANIFEST) == {"forms.json", "rating-criteria.json"}
+    assert {"forms.json", "rating-criteria.json"} <= set(pi.MANIFEST)
     pi.check_manifest()
 
 

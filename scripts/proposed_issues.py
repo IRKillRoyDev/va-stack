@@ -61,6 +61,9 @@ def _json(path: Path) -> dict:
 # SHA-256 of the reviewed data files. Changing either file means reviewing
 # it again (verify_forms, check_criteria) and updating this pin in code.
 MANIFEST = {
+    "ecfr-part4-ratings-2026-10-14.json": (
+        "cf7ea803f09f4d2c80afb885ffbf5d5672635f8bdbc9789d3da06961957f0ef4"
+    ),
     "forms.json": "04fc6e4593948a1476aa358387a627b708e8f95f1bbf40f6c76578a7845a1c80",
     "rating-criteria.json": "3722e0c60626fcbfd84ccfd719f2647302b5e0319bf6d723a6ae3b38e629ad6a",  # noqa: E501
 }
@@ -69,11 +72,12 @@ MANIFEST = {
 def check_manifest(name: str | None = None) -> None:
     """Raise ValueError if a pinned data file differs from its reviewed hash.
 
-    When to use: on every load (load_forms, load_criteria), so a tampered
+    When to use: on every load (load_forms, load_criteria, load_ecfr), so a tampered
     file is refused before it can shape a form row or an estimate.
     """
     for fname in [name] if name else MANIFEST:
-        digest = hashlib.sha256((SKILL_DIR / fname).read_bytes()).hexdigest()
+        path = ECFR_FIXTURE if fname == ECFR_FIXTURE.name else SKILL_DIR / fname
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if digest != MANIFEST[fname]:
             raise ValueError(f"manifest mismatch for {fname}: refusing to use it")
 
@@ -160,7 +164,32 @@ def load_ecfr() -> dict:
 
     When to use: to check quotes and read the §4.25 table.
     """
+    check_manifest(ECFR_FIXTURE.name)
     return _json(ECFR_FIXTURE)
+
+
+URL_ALLOW = {
+    "ecfr": ("https://www.ecfr.gov/",),
+    "form": ("https://www.va.gov/", "https://www.vba.va.gov/"),
+}
+
+
+def check_urls(ecfr: dict, forms: dict) -> list[str]:
+    """Return problems: any report URL outside the allowlisted official sites.
+
+    When to use: on the build path, so a link in the report can only point
+    at eCFR (rule text) or VA.gov / VBA (forms).
+    """
+    problems = []
+    for key, sec in ecfr["sections"].items():
+        for field in ("url", "api_url"):
+            if not str(sec.get(field, "")).startswith(URL_ALLOW["ecfr"]):
+                problems.append(f"§{key} {field} is not on https://www.ecfr.gov/")
+    for name, form in forms["forms"].items():
+        for field in ("vagov_url", "pdf_url"):
+            if not str(form.get(field, "")).startswith(URL_ALLOW["form"]):
+                problems.append(f"{name} {field} is not on va.gov")
+    return problems
 
 
 def verify_forms(forms: dict | None = None) -> list[str]:
@@ -455,10 +484,35 @@ def _check_quote(vault, ev: dict, bot_id: str) -> None:
     lines = {" ".join(ln.split()) for ln in page.splitlines()}
     if len(quote) < MIN_QUOTE and quote not in lines:
         raise ValueError(f"quote too short to cite (< {MIN_QUOTE} chars)")
-    flat = " ".join(page.split())
-    pattern = r"(?<!\w)" + re.escape(quote) + r"(?!\w)"
-    if re.search(pattern, flat) is None:
+    found = False
+    for m in _quote_matches(page, quote):
+        found = True
+        before = page[: m.start()]
+        if before.rstrip(" \t")[-1:] not in ("", "\n", ".", ";", ":"):
+            continue  # must start a sentence or clause
+        sentence = re.split(r"[.!?](?:\s|$)", " ".join(before.split()))[-1]
+        if NEGATION.search(sentence):
+            continue  # a negation earlier in the sentence would be dropped
+        return
+    if not found:
         raise ValueError(f"quote not found on cited page {ev['page']}")
+    raise ValueError(
+        "quote must start a sentence or clause (after . ; : or a line start)"
+        " and must not drop a negation earlier in the sentence"
+    )
+
+
+NEGATION = re.compile(
+    r"\b(?:not|never|no|unlikely|less likely than not|denied|denies|without)\b",
+    re.IGNORECASE,
+)
+
+
+def _quote_matches(page: str, quote: str):
+    """Yield exact matches of quote in page, any whitespace run matching any."""
+    words = [re.escape(w) for w in quote.split()]
+    pattern = r"(?<!\w)" + r"\s+".join(words) + r"(?!\w)"
+    return re.finditer(pattern, page)
 
 
 def build_report(data: dict, vault, bot_id: str) -> dict:
@@ -467,10 +521,12 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
     When to use: main entry point; `vault` is an unlocked records_vault.Vault.
     """
     criteria = load_criteria()
-    problems = verify_forms() + check_criteria(criteria)
+    ecfr = load_ecfr()
+    problems = (
+        verify_forms() + check_criteria(criteria) + check_urls(ecfr, load_forms())
+    )
     if problems:
         raise ValueError("refusing to build: " + "; ".join(problems))
-    ecfr = load_ecfr()
     rows = []
     numeric = []
     for issue in data["issues"]:
@@ -495,15 +551,15 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
         rows.append(
             {
                 "condition": redact(issue["condition"])[0],
-                "basis": issue["basis"],
+                "basis": redact(issue["basis"])[0],
                 "in_service_event": redact(issue.get("in_service_event", ""))[0],
                 "approx_date": issue.get("approx_date", ""),
-                "dc": issue["dc"],
+                "dc": redact(issue["dc"])[0],
                 "links": links,
                 "estimate": level,
                 "rating_wording": {
                     "section": dc["section"] if dc else None,
-                    "dc": issue["dc"],
+                    "dc": redact(issue["dc"])[0],
                     "dc_cite": dc["dc_cite"] if dc else None,
                     "quotes": [h["cite"] for h in hits],
                     "ecfr_url": section.get("url"),
@@ -517,7 +573,7 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                         "at_max": False,
                         "next_level": None,
                         "factors": [],
-                        "text": f"DC {issue['dc']} is not modelled; no estimate.",
+                        "text": "DC not modelled; no estimate.",
                     }
                 ),
                 "notice": est["notice"],

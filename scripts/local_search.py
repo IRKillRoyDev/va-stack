@@ -51,6 +51,21 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"),
     ),
     (
+        # Medicare Beneficiary Identifier: 11 characters, positions
+        # C A AN N A AN N A A N N; letters exclude S, L, O, I, B, Z; the card
+        # prints dashes as 1EG4-TE5-MK73 (CMS, "Understanding the Medicare
+        # Beneficiary Identifier (MBI) Format",
+        # https://www.cms.gov/medicare/new-medicare-card/understanding-the-mbi.pdf,
+        # checked 2026-10-16). CMS converts lowercase, so case is ignored.
+        "MBI",
+        re.compile(
+            r"\b[1-9][AC-HJKMNP-RT-Y][AC-HJKMNP-RT-Y0-9]\d-?"
+            r"[AC-HJKMNP-RT-Y][AC-HJKMNP-RT-Y0-9]\d-?"
+            r"[AC-HJKMNP-RT-Y]{2}\d{2}\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "DOD_ID",
         re.compile(
             r"(?P<lbl>\b(?:DoD ID|EDIPI|DOD ID number)\b[\s:#No.-]*)\d{10}\b"
