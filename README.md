@@ -8,7 +8,7 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 
 | # | Skill | Purpose |
 |---|-------|---------|
-| 1 | [cfr-fetch](skills/cfr-fetch/SKILL.md) | Pull current 38 CFR Parts 3 and 4 from the eCFR API, record the "as of" date |
+| 1 | [cfr-fetch](skills/cfr-fetch/SKILL.md) | Pull current 38 CFR Parts 3, 4, 14 and 20 from the eCFR API, record the "as of" date |
 | 2 | [records-intake](skills/records-intake/SKILL.md) | Index the user's local private records by file, page, date |
 | 3 | [condition-map](skills/condition-map/SKILL.md) | Map diagnoses to Part 4 diagnostic codes and Part 3 bases; name what is shown vs missing |
 | 4 | [claim-citations](skills/claim-citations/SKILL.md) | Build the cited claim table; drop rows lacking a CFR cite AND a record cite |
@@ -27,6 +27,6 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 2. `actions/setup-python@v5` (Python 3.12)
 3. **Check every claim row has a CFR cite and a record cite:** `python3 tests/check_citations.py`. Validates `tests/fixtures/claims-fake.json` against the fictional `tests/fake-records/` (quotes must appear on the cited page; related rows must be "needs more documentation") and confirms `claims-bad.json` is rejected.
 4. **Validate plugin.json files parse and match:** `python3 tests/check_plugin_json.py`
-5. **Check claim-submission track step lists:** `python3 tests/check_submission_tracks.py`. Tracks A, B1, B2 present; step 1 validates sources; every step cites a VA.gov URL or 38 CFR section; no step submits, signs, or contacts VA; `submission-bad.json` is rejected.
+5. **Check claim-submission track step lists:** `python3 tests/check_submission_tracks.py`. Tracks A1, A2, B1, B2, C present; step 1 validates sources; every step cites a VA.gov URL, a govinfo 10 U.S.C. URL, DoDI 1332.18, or a 38 CFR section; no step submits, signs, or contacts VA; `submission-bad.json` is rejected.
 6. **Skill frontmatter present:** every `skills/*/SKILL.md` starts with frontmatter containing `name:` and `description:`.
-7. **claim-submission guardrails present:** the skill contains "never submits", "Step 0: Ask which track", "Track B2", and "§3.155".
+7. **claim-submission guardrails present:** the skill contains "never submits", "Step 0: Ask which track", "Track B2", "Track C", "Track A2", "PEBLO", "§20.202", and "§3.155".
