@@ -28,6 +28,7 @@ def _load(name):
 
 
 pi = _load("proposed_issues")
+rs = _load("review_session")
 rv = sys.modules["records_vault"]
 ls = rv.local_search
 
@@ -64,6 +65,26 @@ def n_rows():
     return len(json.loads(INPUT.read_text())["issues"])
 
 
+def typed_back(keys, capsys):
+    """Scripted input; "PHRASE" types back the confirm phrase printed."""
+    seen = []
+
+    def answer(_p=""):
+        k = next(keys)
+        if k == "PHRASE":
+            seen.append(capsys.readouterr().out)
+            line = [
+                ln
+                for ln in "".join(seen).splitlines()
+                if ln.startswith(rs.PHRASE_PROMPT)
+            ][-1]
+            return line[slice(len(rs.PHRASE_PROMPT), None)].strip()
+        return k
+
+    answer.seen = seen
+    return answer
+
+
 @pytest.fixture
 def fake(monkeypatch):
     v = FakeVault()
@@ -72,11 +93,12 @@ def fake(monkeypatch):
 
 
 def test_review_cli_flag_walks_text(fake, monkeypatch, capsys):
-    keys = iter(["", "n", TYPED] + ["y"] * (n_rows() - 2) + ["c"])
-    monkeypatch.setattr("builtins.input", lambda _p="": next(keys))
+    keys = iter(["y", "n", TYPED] + ["y"] * (n_rows() - 2) + ["c", "PHRASE"])
+    answer = typed_back(keys, capsys)
+    monkeypatch.setattr("builtins.input", answer)
     monkeypatch.setattr(pi, "_gui_available", lambda: True)  # --cli wins
     code = pi.main(["db.fake", str(INPUT), "--bot-id", BOT, "--review", "--cli"])
-    out = capsys.readouterr().out
+    out = "".join(answer.seen) + capsys.readouterr().out
     assert code == 0 and fake.closed
     assert f"1 of {n_rows()}" in out and "Summary" in out
     assert [i["answer"] for i in fake.saved][slice(0, 2)] == ["yes", "no"]
@@ -85,8 +107,8 @@ def test_review_cli_flag_walks_text(fake, monkeypatch, capsys):
 
 
 def test_review_falls_back_to_text_without_gui(fake, monkeypatch, capsys):
-    keys = iter([""] * n_rows() + ["c"])
-    monkeypatch.setattr("builtins.input", lambda _p="": next(keys))
+    keys = iter(["y"] * n_rows() + ["c", "PHRASE"])
+    monkeypatch.setattr("builtins.input", typed_back(keys, capsys))
     monkeypatch.setattr(pi, "_gui_available", lambda: False)
     code = pi.main(["db.fake", str(INPUT), "--bot-id", BOT, "--review"])
     assert code == 0 and all(i["answer"] == "yes" for i in fake.saved)

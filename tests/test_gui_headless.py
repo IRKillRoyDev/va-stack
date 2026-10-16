@@ -143,6 +143,16 @@ def test_unlock_then_review_with_real_widgets(db):
         assert "Summary" in heading(root)
         assert count() == 0  # nothing saved before Confirm all
         assert len(vault.read_log()) == log_start
+        click(root, "Confirm all")  # no phrase typed yet: refused
+        assert count() == 0 and "Summary" in heading(root)
+        rs = ui._sibling("review_session")
+        (shown,) = [h for h in heading(root) if h.startswith(rs.PHRASE_PROMPT)]
+        (entry,) = widgets(root, tk.Entry)
+        entry.insert(0, "wrong words 00")
+        click(root, "Confirm all")  # wrong phrase: refused
+        assert count() == 0
+        entry.delete(0, "end")
+        entry.insert(0, shown[slice(len(rs.PHRASE_PROMPT), None)].strip())
         events.append("confirm")
         click(root, "Confirm all")
 

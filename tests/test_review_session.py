@@ -37,6 +37,19 @@ rv = sys.modules["records_vault"]
 rs = _load("review_session")
 
 
+def scripted(keys, out):
+    """Scripted typing; "PHRASE" types back the confirm phrase shown."""
+
+    def answer(_p=""):
+        k = next(keys)
+        if k == "PHRASE":
+            line = [ln for ln in out if ln.startswith(rs.PHRASE_PROMPT)][-1]
+            return line[slice(len(rs.PHRASE_PROMPT), None)].strip()
+        return k
+
+    return answer
+
+
 @pytest.fixture
 def vault(tmp_path):
     db = tmp_path / "v.db"
@@ -99,7 +112,10 @@ def test_back_and_next_always_available(rep):
 
 def test_keyboard(rep):
     s = rs.ReviewSession(rep)
-    s.key("Return")
+    s.key("Return")  # Enter alone is not a Yes
+    s.key("KP_Enter")
+    assert s.answers == {} and s.view()["progress"].startswith("1 of")
+    s.key("y")
     assert s.answers[rep["cited_report"][0]["row_id"]]["answer"] == "yes"
     s.key("Escape")
     assert s.view()["progress"].startswith("1 of")
@@ -172,7 +188,7 @@ def test_confirm_all_one_save_and_logs(rep, vault, monkeypatch):
     monkeypatch.setattr(socket, "socket", no_net)
     s = rs.ReviewSession(rep)
     walk_all(s, rep)
-    out = s.confirm_all(vault, bot_id=BOT)
+    out = s.confirm_all(vault, bot_id=BOT, phrase=s.confirm_phrase)
     assert calls == [1] and out["saved"] == len(rep["cited_report"])
     assert s.view()["screen"] == "done"
     assert reviews(vault) == len(rep["cited_report"])
@@ -190,21 +206,19 @@ def test_confirm_all_refused_until_every_row_final(rep, vault):
     s = rs.ReviewSession(rep)
     s.press("Yes")
     with pytest.raises(ValueError):
-        s.confirm_all(vault, bot_id=BOT)
+        s.confirm_all(vault, bot_id=BOT, phrase=s.confirm_phrase)
     assert reviews(vault) == 0
 
 
 def test_cli_walk(rep, vault):
     n = len(rep["cited_report"])
-    keys = iter(["", "n", TYPED] + ["y"] * (n - 2) + ["e 1", "y", "c"])
+    keys = iter(["y", "n", TYPED] + ["y"] * (n - 2) + ["e 1", "y", "c", "PHRASE"])
     out = []
-    code = rs.run_cli(
-        rep, vault, BOT, input_fn=lambda _p="": next(keys), say=out.append
-    )
+    code = rs.run_cli(rep, vault, BOT, input_fn=scripted(keys, out), say=out.append)
     text = "\n".join(out)
     assert code == 0
     assert f"1 of {n}" in text and f"{n} of {n}" in text
-    assert "Yes [Enter]" in text and "No [n]" in text and "Back [b]" in text
+    assert "Yes [y]" in text and "No [n]" in text and "Back [b]" in text
     assert pi.NO_PROMPT in text and "Summary" in text and "Confirm all [c]" in text
     assert reviews(vault) == n
 
