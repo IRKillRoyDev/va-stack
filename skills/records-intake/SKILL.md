@@ -5,7 +5,7 @@ description: Ingest a veteran's medical and service records only from a local pr
 
 # records-intake
 
-Requires: an approved snippet list from [local-search](../local-search/SKILL.md). Work from those snippets first.
+Requires: an approved snippet list from [local-search](../local-search/SKILL.md), or from [records-vault](../records-vault/SKILL.md) when the user keeps records in the encrypted vault (consent screen every unlock, bot id on every request, access log). Work from those snippets first.
 
 ## Steps
 
