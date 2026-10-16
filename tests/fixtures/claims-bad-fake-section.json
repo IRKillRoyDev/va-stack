@@ -1,0 +1,22 @@
+{
+  "as_of": "2026-10-14",
+  "claims": [
+    {
+      "condition": "Fake section",
+      "basis": "Direct",
+      "cfr": [
+        "38 CFR \u00a73.999"
+      ],
+      "dc": "5237",
+      "evidence": [
+        {
+          "file": "va-clinic-fake.txt",
+          "page": 1,
+          "quote": "Diagnosis: lumbosacral strain, chronic."
+        }
+      ],
+      "gaps": []
+    }
+  ],
+  "related": []
+}
