@@ -27,3 +27,15 @@ jobs:
         run: |
           f=skills/claim-submission/SKILL.md
           grep -q 'never submits' "$f" && grep -q 'Step 0: Ask which track' "$f" && grep -q 'Track B2' "$f" && grep -q 'Track C' "$f" && grep -q 'Track A2' "$f" && grep -q 'PEBLO' "$f" && grep -q '§20.202' "$f" && grep -q '§3.155' "$f" || { echo "claim-submission guardrails missing"; exit 1; }
+      - name: SAFETY.md disclaimer present
+        run: |
+          test -f SAFETY.md || { echo "SAFETY.md missing"; exit 1; }
+          for s in "Not legal or medical advice" "No filing" "VA-accredited" "processed by the AI service" "dial 988, then press 1"; do
+            grep -qF "$s" SAFETY.md || { echo "SAFETY.md missing: $s"; exit 1; }
+          done
+          if grep -RniE "HIPAA[- ]compliant|zero retention|records stay local|never send records to an external service" --include='*.md' . ; then echo "privacy overclaim found"; exit 1; fi
+      - name: No rating predictions rule present
+        run: |
+          grep -qi "No rating percentage predictions\|No percentage predictions" skills/condition-map/SKILL.md
+          grep -qi "with a percentage" skills/claim-citations/SKILL.md
+          grep -qi "No outcome or rating predictions" skills/claim-submission/SKILL.md

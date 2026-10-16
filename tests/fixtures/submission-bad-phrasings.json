@@ -1,0 +1,97 @@
+{
+ "track": "bad-phrasings",
+ "as_of": "2026-10-16",
+ "steps": [
+  {
+   "step": 1,
+   "action": "validate sources",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 2,
+   "action": "Submit VA Form 21-526EZ for the user",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 3,
+   "action": "E-file the claim on VA.gov",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 4,
+   "action": "Sign the 20-0995 on the user's behalf",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 5,
+   "action": "Send the application to VA",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 6,
+   "action": "Transmit the intent to file to VA",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 7,
+   "action": "Upload the evidence to the claim",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 8,
+   "action": "Fax the 10182 to the Board",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 9,
+   "action": "Email VA the decision review form",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 10,
+   "action": "Call VA to check the claim",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 11,
+   "action": "Contact the VA regional office about the appeal",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 12,
+   "action": "Log in to VA.gov as the user",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 13,
+   "action": "Click submit on the application",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  }
+ ]
+}
