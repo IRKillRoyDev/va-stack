@@ -19,3 +19,7 @@ jobs:
             head -1 "$f" | grep -qx -- '---' || { echo "$f missing frontmatter"; exit 1; }
             grep -q '^name: ' "$f" && grep -q '^description: ' "$f" || { echo "$f missing name/description"; exit 1; }
           done
+      - name: claim-submission guardrails present
+        run: |
+          f=skills/claim-submission/SKILL.md
+          grep -q 'never submits' "$f" && grep -q '^1\. \*\*Validate primary sources' "$f" && grep -q '§3.155' "$f" || { echo "claim-submission guardrails missing"; exit 1; }
