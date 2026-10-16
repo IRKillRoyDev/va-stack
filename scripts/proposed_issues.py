@@ -24,6 +24,7 @@ import datetime
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import sys
 import unicodedata
@@ -898,20 +899,89 @@ def _review_state(vault, row_id: str, links: list[dict], bot_id: str):
     return review, update, f"{USER_UPDATED}: {saved['text']}"
 
 
+def _gui_available() -> bool:
+    """True when tkinter imports and (on Linux) a display is set.
+
+    When to use: to pick the review window or the text walk-through.
+    """
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        return False
+    if sys.platform.startswith("linux"):
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    return True
+
+
+def _sibling(name: str):
+    """Load scripts/<name>.py once (shared through sys.modules)."""
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(
+        name, Path(__file__).resolve().parent / f"{name}.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _review_main(args) -> int:
+    """Build the report from the vault and start the review.
+
+    When to use: from main() with --review. Uses the tkinter Unlock and
+    Review windows when available (unless --cli), else the terminal unlock
+    and the text walk-through. Returns 0 when the user confirmed all rows,
+    1 if they stopped first, 3 if the vault stayed locked. The report JSON
+    is not printed in review mode.
+    """
+    data = _json(args.input)
+    if not args.cli and _gui_available():
+        return _sibling("vault_ui").unlock_and_review(args.db, data, args.bot_id)
+    vault = records_vault._cli_unlock(args.db)
+    if vault is None:
+        print("consent declined; vault stays locked", file=sys.stderr)
+        return 3
+    try:
+        report = build_report(data, vault, args.bot_id)
+        try:
+            return _sibling("review_session").run_cli(
+                report, vault, args.bot_id, input_fn=lambda p="": input(p)
+            )
+        except (EOFError, KeyboardInterrupt):
+            print("\nreview stopped; nothing was saved", file=sys.stderr)
+            return 1
+    finally:
+        vault.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI: consent, unlock, then print the report JSON.
 
-    When to use: `python3 scripts/proposed_issues.py DB INPUT.json --bot-id ID`.
+    When to use: `python3 scripts/proposed_issues.py DB INPUT.json --bot-id ID`
+    [--review [--cli]] to also walk the user through the review.
     """
     parser = argparse.ArgumentParser(description="Proposed issues + estimates.")
     parser.add_argument("db", type=Path)
     parser.add_argument("input", type=Path)
     parser.add_argument("--bot-id", required=True)
+    parser.add_argument(
+        "--review",
+        action="store_true",
+        help="after building the report, walk the user through the review",
+    )
+    parser.add_argument(
+        "--cli",
+        action="store_true",
+        help="with --review: use the text walk-through even if a window can open",
+    )
     args = parser.parse_args(argv)
     problems = verify_forms()
     if problems:
         print("\n".join(problems), file=sys.stderr)
         return 6
+    if args.review:
+        return _review_main(args)
     vault = records_vault._cli_unlock(args.db)
     if vault is None:
         print("consent declined; vault stays locked", file=sys.stderr)

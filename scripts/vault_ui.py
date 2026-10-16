@@ -26,10 +26,29 @@ sys.modules.setdefault("records_vault", records_vault)
 _SPEC.loader.exec_module(records_vault)
 
 
-def run(db_path: Path, bot_id: str) -> int:
-    """Show the Unlock window; returns 0 when unlocked and closed, 3 if locked.
+def _drive(root, hook, args, errors: list) -> None:
+    """Run a scripted hook (tests only) once the window is up; never hang.
 
-    When to use: from main(); needs a display and the tkinter package.
+    When to use: inside unlock()/run_review() when on_ready is given. An
+    error in the hook closes the window and is re-raised after mainloop.
+    """
+
+    def call() -> None:
+        try:
+            hook(root, *args)
+        except BaseException as exc:  # re-raised after mainloop
+            errors.append(exc)
+            root.destroy()
+
+    root.after(0, call)
+
+
+def unlock(db_path: Path, bot_id: str, on_ready=None):
+    """Show the Unlock window; return the unlocked Vault, or None if locked.
+
+    When to use: before the review window or search, on the user's own
+    computer. The caller must close() the returned vault. on_ready(root)
+    is a test hook that drives the window with real widget events.
     """
     import tkinter as tk
     from tkinter import messagebox
@@ -37,7 +56,8 @@ def run(db_path: Path, bot_id: str) -> int:
     flow = records_vault.UnlockFlow(db_path)
     root = tk.Tk()
     root.title("Unlock records vault")
-    result = {"code": 3}
+    result = {"vault": None}
+    errors: list = []
 
     consent_box = tk.Text(root, width=70, height=12, wrap="word")
     consent_box.insert("1.0", flow.consent_text)
@@ -58,22 +78,10 @@ def run(db_path: Path, bot_id: str) -> int:
         buf = bytearray(password.get().encode())
         password.delete(0, "end")
         try:
-            vault = flow.submit(buf)
+            result["vault"] = flow.submit(buf)
         except records_vault.WrongPassword:
             messagebox.showerror("Locked", "Wrong password. The vault stays locked.")
-            root.destroy()
-            return
-        try:
-            ok = vault.verify_log(bot_id=bot_id)
-            messagebox.showinfo(
-                "Unlocked",
-                f"Unlocked for bot id {bot_id}. Access log valid: {ok}. "
-                "Closing wipes the key from memory.",
-            )
-            result["code"] = 0
-        finally:
-            vault.close()
-            root.destroy()
+        root.destroy()
 
     tk.Checkbutton(
         root,
@@ -85,11 +93,74 @@ def run(db_path: Path, bot_id: str) -> int:
     tk.Label(root, text="Vault password").pack(anchor="w", padx=8)
     password.pack(fill="x", padx=8)
     tk.Button(root, text="Unlock", command=on_unlock).pack(pady=8)
+    password.bind("<Return>", lambda _e: on_unlock())
+    if on_ready is not None:
+        _drive(root, on_ready, (), errors)
     root.mainloop()
-    return result["code"]
+    if errors:
+        if result["vault"] is not None:
+            result["vault"].close()
+        raise errors[0]
+    return result["vault"]
 
 
-def run_review(report: dict, vault, bot_id: str) -> int:
+def run(db_path: Path, bot_id: str) -> int:
+    """Show the Unlock window; returns 0 when unlocked and closed, 3 if locked.
+
+    When to use: from main(); needs a display and the tkinter package.
+    """
+    from tkinter import messagebox
+
+    vault = unlock(db_path, bot_id)
+    if vault is None:
+        return 3
+    try:
+        ok = vault.verify_log(bot_id=bot_id)
+        messagebox.showinfo(
+            "Unlocked",
+            f"Unlocked for bot id {bot_id}. Access log valid: {ok}. "
+            "Closing wipes the key from memory.",
+        )
+    finally:
+        vault.close()
+    return 0
+
+
+def unlock_and_review(
+    db_path: Path, data: dict, bot_id: str, on_unlock=None, on_review=None
+) -> int:
+    """Unlock window, build the report, then the review window.
+
+    When to use: from `proposed_issues.py DB INPUT.json --bot-id ID --review`
+    when a display is available. Returns 0 when the review was confirmed,
+    1 if the review window was closed first, 3 if the vault stayed locked.
+    on_unlock/on_review are test hooks that drive the windows.
+    """
+    pi = _sibling("proposed_issues")
+    vault = unlock(db_path, bot_id, on_ready=on_unlock)
+    if vault is None:
+        return 3
+    try:
+        report = pi.build_report(data, vault, bot_id)
+        return run_review(report, vault, bot_id, on_ready=on_review)
+    finally:
+        vault.close()
+
+
+def _sibling(name: str):
+    """Load scripts/<name>.py once (shared through sys.modules)."""
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(
+        name, Path(__file__).resolve().parent / f"{name}.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def run_review(report: dict, vault, bot_id: str, on_ready=None) -> int:
     """Show the checkout-style review window; 0 when confirmed, 1 if closed.
 
     When to use: after Unlock, with a built report. All logic lives in
@@ -99,13 +170,7 @@ def run_review(report: dict, vault, bot_id: str) -> int:
     Enter = Yes, n = No, Esc = Back, Right = Next. Needs a display and the
     tkinter package; falls back to review_session.run_cli() without them.
     """
-    spec = importlib.util.spec_from_file_location(
-        "review_session", Path(__file__).resolve().parent / "review_session.py"
-    )
-    rs = sys.modules.get("review_session") or importlib.util.module_from_spec(spec)
-    if "review_session" not in sys.modules:
-        sys.modules["review_session"] = rs
-        spec.loader.exec_module(rs)
+    rs = _sibling("review_session")
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -221,7 +286,12 @@ def run_review(report: dict, vault, bot_id: str) -> int:
 
     root.bind("<Key>", on_key)
     draw()
+    errors: list = []
+    if on_ready is not None:
+        _drive(root, on_ready, (vault,), errors)
     root.mainloop()
+    if errors:
+        raise errors[0]
     return result["code"]
 
 
