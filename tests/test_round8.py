@@ -40,7 +40,11 @@ class FakeVault:
 
 
 def check(page, quote):
-    pi._check_quote(FakeVault(page), {"quote": quote, "file": "f", "page": 1}, "b")
+    return pi.cite_quote(FakeVault(page), {"quote": quote, "file": "f", "page": 1}, "b")
+
+
+# Round 9 design change: these quotes are no longer refused. They are cited
+# with context, widened to whole sentences, and flagged for the reader.
 
 
 # ---- HIGH: whole sentences only -------------------------------------------
@@ -61,9 +65,12 @@ def check(page, quote):
         "It is not\n" + T + ".",
     ],
 )
-def test_partial_sentence_quotes_rejected(page):
-    with pytest.raises(ValueError):
-        check(page, T)
+def test_partial_sentence_quotes_flagged(page):
+    out = check(page, T)
+    assert pi.FLAG_WIDENED in out["flags"]
+    if pi.NEGATION.search(page):
+        assert pi.FLAG_NEGATIVE in out["flags"]
+    assert out["quote"] != T and T in out["quote"]
 
 
 @pytest.mark.parametrize(
@@ -81,14 +88,14 @@ def test_partial_sentence_quotes_rejected(page):
     ],
 )
 def test_whole_sentence_quotes_accepted(page, quote):
-    check(page, quote)
+    out = check(page, quote)
+    assert out["quote"] == quote and pi.FLAG_WIDENED not in out["flags"]
 
 
 def test_negation_backup_covers_text_after_quote():
     # A bad wrap (lowercase continuation) must not hide a following negation.
     page = T + ".\nnot supported by the record."
-    with pytest.raises(ValueError):
-        check(page, T + ".")
+    assert pi.FLAG_NEGATIVE in check(page, T + ".")["flags"]
 
 
 def test_negation_list_extended():
@@ -156,4 +163,5 @@ def test_input_fixture_quotes_are_whole_sentences():
         for ev in issue["evidence"]:
             raw = (ROOT / "tests/fake-records" / ev["file"]).read_text()
             text = ls.redact(raw)[0]  # vault pages are redacted
-            check(text, ev["quote"])
+            out = check(text, ev["quote"])
+            assert pi.FLAG_WIDENED not in out["flags"], ev["quote"]

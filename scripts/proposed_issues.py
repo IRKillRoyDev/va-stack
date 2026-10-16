@@ -490,45 +490,72 @@ def _check_decision_date(value: str) -> None:
         raise ValueError(f"decision date out of range: {value!r}")
 
 
-def _check_quote(vault, ev: dict, bot_id: str) -> None:
-    """Reject a quote unless it is one or more whole sentences on the page.
+LABEL = "cited, needs your read."
+FLAG_NEGATIVE = "Possible negative or qualified opinion; read the context."
+FLAG_WIDENED = (
+    "Quote was widened to the whole sentence(s) it sits in; read the context."
+)
+FLAG_BOUNDARY = (
+    "Sentence boundary next to the quote may be an abbreviation; read the context."
+)
+CONTEXT_SENTENCES = 2
+_ABBREV_LIKE = re.compile(r"(?:[A-Za-z]\.){2,}|[A-Za-z]{1,4}\.")
 
-    When to use: on every evidence item before it is cited. The quote,
-    whitespace-normalized, must equal a run of consecutive whole sentences
-    from split_sentences() (case included), so it cannot start or end inside
-    a sentence and silently drop "not", "e.g. ...", or a qualifier after it.
-    Backup: sentences are also grouped conservatively (a piece starting in
-    lowercase is joined to the one before, e.g. a wrapped line), and any
-    text in that group outside the quote must hold no NEGATION word.
-    The check reads the page through the vault, so it is logged.
+
+def cite_quote(vault, ev: dict, bot_id: str) -> dict:
+    """Cite a quote with its record context; never judge what it means.
+
+    When to use: on every evidence item. The tool only proves the quote is
+    really in the record: it refuses an empty, too-short, or not-found quote,
+    and otherwise always returns the citation (rows are never dropped):
+    - "quote": the whole sentence(s) the quote sits in (whole-sentence rule;
+      a partial quote is widened and flagged),
+    - "context": 2 sentences before and 2 after, redacted, with the cited
+      sentences marked [QUOTE]...[/QUOTE],
+    - "flags": FLAG_NEGATIVE when any NEGATION or HEDGE word appears anywhere
+      in the context window, plus widened / uncertain-boundary flags,
+    - "label": always LABEL. Nothing is ever labeled as backing a claim.
+    The page is read through the vault, so the open is logged.
     """
     quote = " ".join(redact(ev.get("quote") or "")[0].split())
     if not quote:
         raise ValueError("empty quote")
-    page = vault.open_link(vault.link_for(ev["file"], ev["page"]), bot_id=bot_id)
+    raw = vault.open_link(vault.link_for(ev["file"], ev["page"]), bot_id=bot_id)
+    page = redact(raw)[0]
     lines = {" ".join(ln.split()) for ln in page.splitlines()}
     if len(quote) < MIN_QUOTE and quote not in lines:
         raise ValueError(f"quote too short to cite (< {MIN_QUOTE} chars)")
     units = split_sentences(page)
-    group = _conservative_groups(units)
-    for start in range(len(units)):
-        for end in range(start + 1, len(units) + 1):
-            joined = " ".join(units[start:end])
-            if len(joined) > len(quote):
-                break
-            if joined != quote:
-                continue
-            ctx = {k for k in range(len(units)) if group[k] in group[start:end]}
-            outside = " ".join(units[k] for k in sorted(ctx) if not start <= k < end)
-            if NEGATION.search(outside):
-                raise ValueError(
-                    "quote would drop a negation in the same sentence: quote the"
-                    " whole sentence"
-                )
-            return
-    if not _quote_matches(page, quote):
+    flat = " ".join(units)
+    pos = flat.find(quote)
+    if pos == -1:
         raise ValueError(f"quote not found on cited page {ev['page']}")
-    raise ValueError("quote must be one or more whole sentences, matched start to end")
+    starts, offset = [], 0
+    for unit in units:
+        starts.append(offset)
+        offset += len(unit) + 1
+    first = max(k for k, st in enumerate(starts) if st <= pos)
+    last = max(k for k, st in enumerate(starts) if st < pos + len(quote))
+    cited = " ".join(units[slice(first, last + 1)])
+    before = units[slice(max(0, first - CONTEXT_SENTENCES), first)]
+    after = units[slice(last + 1, last + 1 + CONTEXT_SENTENCES)]
+    text = " ".join([*before, "[QUOTE]" + cited + "[/QUOTE]", *after])
+    flags = []
+    if NEGATION.search(" ".join([*before, cited, *after])):
+        flags.append(FLAG_NEGATIVE)
+    if cited != quote:
+        flags.append(FLAG_WIDENED)
+    edges = [units[first - 1]] if first else []
+    edges.append(units[last])
+    if any(_ABBREV_LIKE.fullmatch(u.split()[-1]) for u in edges if u.split()):
+        flags.append(FLAG_BOUNDARY)
+    return {
+        "quote": cited,
+        "your_quote": quote,
+        "context": {"before": before, "quote": cited, "after": after, "text": text},
+        "flags": flags,
+        "label": LABEL,
+    }
 
 
 # Abbreviations whose period does not end a sentence (lowercase compare).
@@ -566,27 +593,15 @@ def split_sentences(text: str) -> list[str]:
     return out
 
 
-def _conservative_groups(units: list[str]) -> list[int]:
-    """Group id per sentence; a sentence starting in lowercase joins the previous."""
-    groups, gid = [], 0
-    for k, unit in enumerate(units):
-        if k and not re.match(r"[a-z]", unit):
-            gid += 1
-        groups.append(gid)
-    return groups
-
-
 NEGATION = re.compile(
     r"\b(?:not|never|no|unlikely|less likely than not|denied|denies|without"
-    r"|cannot|can't|ruled out|negative|against|unrelated)\b|n't\b",
+    r"|cannot|can't|ruled out|negative|against|unrelated"
+    # hedges and qualifiers
+    r"|unable|fails to|insufficient|inconsistent|doubtful|less than 50 percent"
+    # explicit disagreement (needed for the red-team "rejects"/"disagrees" cases)
+    r"|rejects?|disagrees?|disputes?|refutes?|contradicts?)\b|n't\b",
     re.IGNORECASE,
 )
-
-
-def _quote_matches(page: str, quote: str) -> bool:
-    """True if quote occurs anywhere in page, any whitespace run matching any."""
-    words = [re.escape(w) for w in quote.split()]
-    return re.search(r"\s+".join(words), page) is not None
 
 
 def build_report(data: dict, vault, bot_id: str) -> dict:
@@ -610,16 +625,21 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
         est = estimate(dc, issue.get("findings", {}))
         level, hits = est["estimate"], est["hits"]
         section = ecfr["sections"][dc["section"]] if dc else {}
+        links = []
         for ev in issue["evidence"]:
-            _check_quote(vault, ev, bot_id)
-        links = [
-            {
-                "link": vault.link_for(ev["file"], ev["page"]),
-                "page": ev["page"],
-                "quote": redact(ev["quote"])[0],
-            }
-            for ev in issue["evidence"]
-        ]
+            cite = cite_quote(vault, ev, bot_id)
+            links.append(
+                {
+                    "link": vault.link_for(ev["file"], ev["page"]),
+                    "page": ev["page"],
+                    "quote": cite["quote"],
+                    "your_quote": cite["your_quote"],
+                    "context": cite["context"],
+                    "flags": cite["flags"],
+                    "label": cite["label"],
+                }
+            )
+        row_flags = list(dict.fromkeys(f for ln in links for f in ln["flags"]))
         if isinstance(level, int):
             numeric.append(level)
         rows.append(
@@ -630,6 +650,8 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                 "approx_date": issue.get("approx_date", ""),
                 "dc": redact(issue["dc"])[0],
                 "links": links,
+                "label": LABEL,
+                "flags": row_flags,
                 "estimate": level,
                 "rating_wording": {
                     "section": dc["section"] if dc else None,

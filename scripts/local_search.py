@@ -44,6 +44,11 @@ STATES = (
     "|WI|WY|PR|GU|VI|AS|MP|AA|AE|AP"
 )
 
+# MBI character classes (see the MBI entry below).
+_MBI_A = r"[AC-HJKMNP-RT-Y]"
+_MBI_AN = r"[AC-HJKMNP-RT-Y0-9]"
+_MBI_SEP = r"(?:[-\u2010-\u2015\u2212._/]| {1,2})?"
+
 # Order matters: labeled identifiers first, then generic number shapes.
 REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
@@ -57,12 +62,12 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         # Beneficiary Identifier (MBI) Format",
         # https://www.cms.gov/medicare/new-medicare-card/understanding-the-mbi.pdf,
         # checked 2026-10-16). CMS converts lowercase, so case is ignored.
-        # Separators: dash (any Unicode dash), space, or dot.
+        # Separators: dash (any Unicode dash), dot, underscore, slash, or one or
+        # two spaces.
         "MBI",
         re.compile(
-            r"\b[1-9][AC-HJKMNP-RT-Y][AC-HJKMNP-RT-Y0-9]\d[-\u2010-\u2015\u2212 .]?"
-            r"[AC-HJKMNP-RT-Y][AC-HJKMNP-RT-Y0-9]\d[-\u2010-\u2015\u2212 .]?"
-            r"[AC-HJKMNP-RT-Y]{2}\d{2}\b",
+            rf"\b[1-9]{_MBI_A}{_MBI_AN}\d{_MBI_SEP}{_MBI_A}{_MBI_AN}\d{_MBI_SEP}"
+            rf"{_MBI_A}{{2}}\d{{2}}\b",
             re.IGNORECASE,
         ),
     ),
