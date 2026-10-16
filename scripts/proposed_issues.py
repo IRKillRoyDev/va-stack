@@ -308,6 +308,31 @@ def _form_rows(form_name: str | None, issues: list[dict]) -> dict:
     }
 
 
+APPROX_DATE = re.compile(r"(?:0[1-9]|1[0-2])-\d{4}")
+
+
+def _check_date(value: str) -> None:
+    """Reject anything but MM-YYYY (month and year only) or empty.
+
+    When to use: on every approximate date, so a full date (which could be a
+    date of birth) never reaches the form list.
+    """
+    if value and not APPROX_DATE.fullmatch(value):
+        raise ValueError(f"approximate date must be MM-YYYY: {value!r}")
+
+
+def _check_quote(vault, ev: dict, bot_id: str) -> None:
+    """Reject a quote that is not on the cited record page (redacted text).
+
+    When to use: on every evidence item before it is cited. The check reads
+    the page through the vault, so it is logged like any other open.
+    """
+    page = vault.open_link(vault.link_for(ev["file"], ev["page"]), bot_id=bot_id)
+    quote = " ".join(redact(ev["quote"])[0].split())
+    if quote not in " ".join(page.split()):
+        raise ValueError(f"quote not found on cited page {ev['page']}")
+
+
 def build_report(data: dict, vault, bot_id: str) -> dict:
     """Build the cited report, the form-mapped list, and the combined estimate.
 
@@ -321,6 +346,9 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
         dc = criteria["dcs"][issue["dc"]]
         section = ecfr["sections"][dc["section"]]
         level, hits = estimate(dc, issue.get("findings", {}))
+        _check_date(issue.get("approx_date", ""))
+        for ev in issue["evidence"]:
+            _check_quote(vault, ev, bot_id)
         links = [
             {
                 "link": vault.link_for(ev["file"], ev["page"]),

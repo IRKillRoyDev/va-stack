@@ -249,3 +249,65 @@ def test_quotes_in_report_are_redacted(vault):
     )
     rep = pi.build_report(data, vault, bot_id=BOT)
     assert "000-12-3456" not in json.dumps(rep)
+
+
+# ---- audit additions ---------------------------------------------------
+def test_evidence_quotes_appear_in_record_page(vault, report):
+    for row in report["cited_report"]:
+        for link in row["links"]:
+            page = vault.open_link(link["link"], bot_id=BOT)
+            assert " ".join(link["quote"].split()) in " ".join(page.split())
+
+
+def test_invented_quote_is_rejected(vault):
+    data = copy.deepcopy(INPUT)
+    data["issues"][0]["evidence"][0]["quote"] = "lesions on 80 percent of the body"
+    with pytest.raises(ValueError):
+        pi.build_report(data, vault, bot_id=BOT)
+
+
+def test_dc_wording_matches_fixture(report):
+    for row in report["cited_report"]:
+        text = ECFR["sections"][row["rating_wording"]["section"]]["text"]
+        assert row["rating_wording"]["dc_cite"] in text
+        assert row["rating_wording"]["as_of"] == ECFR["as_of"]
+        assert row["rating_wording"]["api_url"].startswith(
+            "https://www.ecfr.gov/api/versioner/v1/full/2026-10-14/title-38.xml"
+        )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Your symptoms may worsen.",
+        "Do this to increase your rating.",
+        "Try to get more visits.",
+        "This can raise your rating.",
+        "You could get a higher rating by changing treatment.",
+    ],
+)
+def test_pushy_guard_rejects_each_phrase(text):
+    with pytest.raises(ValueError):
+        pi.check_gap_text(text)
+
+
+@pytest.mark.parametrize("bad", ["2004-06-14", "06/14/2004", "June 2004", "13-2004"])
+def test_approx_date_must_be_month_year(vault, bad):
+    data = copy.deepcopy(INPUT)
+    data["issues"][0]["approx_date"] = bad
+    with pytest.raises(ValueError):
+        pi.build_report(data, vault, bot_id=BOT)
+
+
+def test_skill_documents_every_form_and_date_procedure():
+    skill = (ROOT / "skills/proposed-issues/SKILL.md").read_text()
+    forms = pi.load_forms()
+    for name, f in forms["forms"].items():
+        row = next(ln for ln in skill.splitlines() if ln.startswith(f"| {name} |"))
+        for part in (f["revision"], f["vagov_url"], f["pdf_url"], forms["as_of"]):
+            assert part in row
+        for col in f["columns"]:
+            assert col["label"] in row and col["fields"][0] in row
+    for part in ("--keep-dates", "birth label", "every mode", "MM-YYYY", "confirmed"):
+        assert part in skill
+    assert pi.ESTIMATE_NOTICE in skill and pi.INSUFFICIENT in skill
