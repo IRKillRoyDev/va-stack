@@ -16,7 +16,8 @@ Use this when the user wants records encrypted at rest between sessions. It wrap
 5. Search: `python3 scripts/records_vault.py search "<db>" --bot-id <id> -t "<term>"`. Output is the same redacted JSON as local-search. The user approves the snippet list before anything goes to the AI service.
 6. Log each approved snippet with `Vault.record_sent()` (file, page, line, keyed HMAC-SHA256 of the text, no text). Use `Vault.approve_page()` for a whole page, and only after the user explicitly approves that page.
 7. Check the log: `python3 scripts/records_vault.py verify "<db>" --bot-id <id>`. Read it: `... log "<db>" --bot-id <id>`.
-8. End the session: the vault closes, the key buffer is overwritten with zeros, and the process exits.
+8. Optional: keep a copy of the signed log head elsewhere with `Vault.export_head(path)`, and later check it with `Vault.verify_log(external_head=path)`. This catches rolling back the database and its head file together. It does not stop someone who knows the password from rewriting the whole log.
+9. End the session: the vault closes, the key buffer is overwritten with zeros, and the process exits.
 
 ## Stop rules
 
