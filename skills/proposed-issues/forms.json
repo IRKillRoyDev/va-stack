@@ -1,0 +1,323 @@
+{
+ "as_of": "2026-10-16",
+ "fixtures_dir": "tests/fixtures/va-forms",
+ "tracks": {
+  "A1": "21-526EZ",
+  "B1": "21-526EZ",
+  "B2-increase": "21-526EZ",
+  "B2-new-condition": "21-526EZ",
+  "B2-supplemental": "20-0995",
+  "B2-hlr": "20-0996",
+  "B2-board": "10182",
+  "C-dic": "21P-534EZ",
+  "intent-to-file": "21-0966",
+  "A2": null
+ },
+ "track_notes": {
+  "A2": "IDES uses other forms; no form template is verified here, so only the full cited report is produced."
+ },
+ "forms": {
+  "21-526EZ": {
+   "title": "Application for Disability Compensation and Related Compensation Benefits",
+   "revision": "JAN 2026",
+   "vagov_url": "https://www.va.gov/find-forms/about-form-21-526ez/",
+   "vagov_revision": "January 2026",
+   "pdf_url": "https://www.vba.va.gov/pubs/forms/VBA-21-526EZ-ARE.pdf",
+   "section": "SECTION V: CLAIM INFORMATION",
+   "page": 11,
+   "columns": [
+    {
+     "issue_field": "condition",
+     "label": "CURRENT DISABILITY(IES)",
+     "fields": [
+      "F[0].#subform[10].CURRENTDISABILITY[0]",
+      "F[0].#subform[10].CURRENTDISABILITY[1]",
+      "F[0].#subform[10].CURRENTDISABILITY[2]",
+      "F[0].#subform[10].CURRENTDISABILITY[3]",
+      "F[0].#subform[10].CURRENTDISABILITY[4]",
+      "F[0].#subform[10].CURRENTDISABILITY[5]",
+      "F[0].#subform[10].CURRENTDISABILITY[6]",
+      "F[0].#subform[10].CURRENTDISABILITY[7]",
+      "F[0].#subform[10].CURRENTDISABILITY[8]",
+      "F[0].#subform[10].CURRENTDISABILITY[9]",
+      "F[0].#subform[10].CURRENTDISABILITY[10]",
+      "F[0].#subform[10].CURRENTDISABILITY[11]",
+      "F[0].#subform[10].CURRENTDISABILITY[12]",
+      "F[0].#subform[10].CURRENTDISABILITY[13]",
+      "F[0].#subform[10].CURRENTDISABILITY[14]"
+     ],
+     "status": "VERIFIED"
+    },
+    {
+     "issue_field": "in_service_event",
+     "label": "IF DUE TO EXPOSURE, EVENT, OR INJURY, PLEASE SPECIFY",
+     "fields": [
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[0]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[1]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[2]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[3]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[4]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[5]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[6]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[7]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[8]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[9]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[10]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[11]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[12]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[13]",
+      "F[0].#subform[10].Specify_Type_Of_Exposure_Event_Or_Injury[14]"
+     ],
+     "status": "VERIFIED"
+    },
+    {
+     "issue_field": "explanation",
+     "label": "EXPLAIN HOW THE DISABILITY(IES) RELATES TO THE IN-SERVICE EVENT/EXPOSURE/INJURY",
+     "fields": [
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[0]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[1]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[2]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[3]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[4]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[5]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[6]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[7]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[8]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[9]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[10]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[11]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[12]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[13]",
+      "F[0].#subform[10].ExplainHowDisabilityRelatesToEvent_Exposure_Injury[14]"
+     ],
+     "status": "VERIFIED"
+    },
+    {
+     "issue_field": "approx_date",
+     "label": "APPROXIMATE DATE DISABILITY(IES) BEGAN OR WORSENED",
+     "fields": [
+      "F[0].#subform[10].Date_Disability_Began_Or_Worsened[0]",
+      "F[0].#subform[10].Date12[0]",
+      "F[0].#subform[10].Date12[1]",
+      "F[0].#subform[10].Date12[2]",
+      "F[0].#subform[10].Date12[3]",
+      "F[0].#subform[10].Date12[4]",
+      "F[0].#subform[10].Date12[5]",
+      "F[0].#subform[10].Date12[6]",
+      "F[0].#subform[10].Date12[7]",
+      "F[0].#subform[10].Date12[8]",
+      "F[0].#subform[10].Date12[9]",
+      "F[0].#subform[10].Date12[10]",
+      "F[0].#subform[10].Date12[11]",
+      "F[0].#subform[10].Date12[12]",
+      "F[0].#subform[10].Date12[13]"
+     ],
+     "status": "VERIFIED"
+    }
+   ]
+  },
+  "21-0966": {
+   "title": "Intent to File a Claim for Compensation and/or Pension, or Survivors Pension and/or D.I.C.",
+   "revision": "MAY 2026",
+   "vagov_url": "https://www.va.gov/find-forms/about-form-21-0966/",
+   "vagov_revision": "May 2026",
+   "pdf_url": "https://www.vba.va.gov/pubs/forms/VBA-21-0966-ARE.pdf",
+   "section": "SECTION III: GENERAL BENEFIT ELECTION",
+   "page": 2,
+   "columns": [
+    {
+     "issue_field": "benefit",
+     "label": "19. I INTEND TO FILE FOR THE GENERAL BENEFIT(S) CHECKED BELOW",
+     "fields": [
+      "F[0].#subform[1].Compensation[0]"
+     ],
+     "status": "VERIFIED"
+    }
+   ]
+  },
+  "20-0995": {
+   "title": "Decision Review Request: Supplemental Claim",
+   "revision": "MAY 2024",
+   "vagov_url": "https://www.va.gov/find-forms/about-form-20-0995/",
+   "vagov_revision": "May 2024",
+   "pdf_url": "https://www.vba.va.gov/pubs/forms/VBA-20-0995-ARE.pdf",
+   "section": "SECTION IV: ISSUE(S) FOR SUPPLEMENTAL CLAIM",
+   "page": 5,
+   "columns": [
+    {
+     "issue_field": "specific_issue",
+     "label": "21A. SPECIFIC ISSUE(S)",
+     "fields": [
+      "form1[0].#subform[17].Table2[0].Row1[0].SPECIFICISSUE1[0]",
+      "form1[0].#subform[17].Table2[0].Row2[0].SPECIFICISSUE2[0]",
+      "form1[0].#subform[17].Table2[0].Row3[0].SPECIFICISSUE2[0]",
+      "form1[0].#subform[17].Table2[0].Row4[0].SPECIFICISSUE2[0]",
+      "form1[0].#subform[17].Table2[0].Row5[0].SPECIFICISSUE2[0]",
+      "form1[0].#subform[17].Table2[0].Row6[0].SPECIFICISSUE2[0]",
+      "form1[0].#subform[17].Table2[0].Row7[0].SPECIFICISSUE2[0]"
+     ],
+     "status": "VERIFIED"
+    },
+    {
+     "issue_field": "decision_date",
+     "label": "21B. DATE OF VA DECISION NOTICE",
+     "fields": [
+      "form1[0].#subform[17].Table2[0].Row1[0].#subform[0].#subform[1].Month[0]",
+      "form1[0].#subform[17].Table2[0].Row1[0].#subform[0].#subform[1].Day[0]",
+      "form1[0].#subform[17].Table2[0].Row1[0].#subform[0].#subform[1].Year[0]",
+      "form1[0].#subform[17].Table2[0].Row2[0].#subform[0].Month[0]",
+      "form1[0].#subform[17].Table2[0].Row2[0].#subform[0].Day[0]",
+      "form1[0].#subform[17].Table2[0].Row2[0].#subform[0].Year[0]",
+      "form1[0].#subform[17].Table2[0].Row3[0].#subform[0].Month[0]",
+      "form1[0].#subform[17].Table2[0].Row3[0].#subform[0].Day[0]",
+      "form1[0].#subform[17].Table2[0].Row3[0].#subform[0].Year[0]",
+      "form1[0].#subform[17].Table2[0].Row4[0].#subform[0].Month[0]",
+      "form1[0].#subform[17].Table2[0].Row4[0].#subform[0].Day[0]",
+      "form1[0].#subform[17].Table2[0].Row4[0].#subform[0].Year[0]",
+      "form1[0].#subform[17].Table2[0].Row5[0].#subform[0].Month[0]",
+      "form1[0].#subform[17].Table2[0].Row5[0].#subform[0].Day[0]",
+      "form1[0].#subform[17].Table2[0].Row5[0].#subform[0].Year[0]",
+      "form1[0].#subform[17].Table2[0].Row6[0].#subform[0].Month[0]",
+      "form1[0].#subform[17].Table2[0].Row6[0].#subform[0].Day[0]",
+      "form1[0].#subform[17].Table2[0].Row6[0].#subform[0].Year[0]",
+      "form1[0].#subform[17].Table2[0].Row7[0].#subform[0].Month[0]",
+      "form1[0].#subform[17].Table2[0].Row7[0].#subform[0].Day[0]",
+      "form1[0].#subform[17].Table2[0].Row7[0].#subform[0].Year[0]"
+     ],
+     "status": "VERIFIED"
+    }
+   ]
+  },
+  "20-0996": {
+   "title": "Decision Review Request: Higher-Level Review",
+   "revision": "MAR 2024",
+   "vagov_url": "https://www.va.gov/find-forms/about-form-20-0996/",
+   "vagov_revision": "March 2024",
+   "pdf_url": "https://www.vba.va.gov/pubs/forms/VBA-20-0996-ARE.pdf",
+   "section": "SECTION V - ISSUES FOR HIGHER-LEVEL REVIEW",
+   "page": 4,
+   "columns": [
+    {
+     "issue_field": "specific_issue",
+     "label": "18A. SPECIFIC ISSUE(S) OF DISAGREEMENT (REQUIRED)",
+     "fields": [
+      "form1[0].#subform[3].SPECIFICISSUE1[0]",
+      "form1[0].#subform[3].SPECIFICISSUE1[1]",
+      "form1[0].#subform[3].SPECIFICISSUE1[2]",
+      "form1[0].#subform[3].SPECIFICISSUE1[3]",
+      "form1[0].#subform[3].SPECIFICISSUE3[0]",
+      "form1[0].#subform[3].SPECIFICISSUE4[0]",
+      "form1[0].#subform[3].SPECIFICISSUE5[0]",
+      "form1[0].#subform[4].SPECIFICISSUE1[4]",
+      "form1[0].#subform[4].SPECIFICISSUE1[5]",
+      "form1[0].#subform[4].SPECIFICISSUE1[6]",
+      "form1[0].#subform[4].SPECIFICISSUE1[7]",
+      "form1[0].#subform[4].SPECIFICISSUE3[1]",
+      "form1[0].#subform[4].SPECIFICISSUE3[2]"
+     ],
+     "status": "VERIFIED"
+    },
+    {
+     "issue_field": "decision_date",
+     "label": "18B. DATE OF VA DECISION NOTIFICATION",
+     "fields": [
+      "form1[0].#subform[3].Date_Month[0]",
+      "form1[0].#subform[3].Date_Day[0]",
+      "form1[0].#subform[3].Date_Year[0]",
+      "form1[0].#subform[3].Date_Month[1]",
+      "form1[0].#subform[3].Date_Day[1]",
+      "form1[0].#subform[3].Date_Year[1]",
+      "form1[0].#subform[3].Date_Month[2]",
+      "form1[0].#subform[3].Date_Day[2]",
+      "form1[0].#subform[3].Date_Year[2]",
+      "form1[0].#subform[3].Date_Month[3]",
+      "form1[0].#subform[3].Date_Day[3]",
+      "form1[0].#subform[3].Date_Year[3]",
+      "form1[0].#subform[3].Date_Month[4]",
+      "form1[0].#subform[3].Date_Day[4]",
+      "form1[0].#subform[3].Date_Year[4]",
+      "form1[0].#subform[3].Date_Month[5]",
+      "form1[0].#subform[3].Date_Day[5]",
+      "form1[0].#subform[3].Date_Year[5]",
+      "form1[0].#subform[3].Date_Month[6]",
+      "form1[0].#subform[3].Date_Day[6]",
+      "form1[0].#subform[3].Date_Year[6]",
+      "form1[0].#subform[4].Date_Month[7]",
+      "form1[0].#subform[4].Date_Day[7]",
+      "form1[0].#subform[4].Date_Year[7]",
+      "form1[0].#subform[4].Date_Month[8]",
+      "form1[0].#subform[4].Date_Day[8]",
+      "form1[0].#subform[4].Date_Year[8]",
+      "form1[0].#subform[4].Date_Month[9]",
+      "form1[0].#subform[4].Date_Day[9]",
+      "form1[0].#subform[4].Date_Year[9]",
+      "form1[0].#subform[4].Date_Month[10]",
+      "form1[0].#subform[4].Date_Day[10]",
+      "form1[0].#subform[4].Date_Year[10]",
+      "form1[0].#subform[4].Date_Month[11]",
+      "form1[0].#subform[4].Date_Day[11]",
+      "form1[0].#subform[4].Date_Year[11]",
+      "form1[0].#subform[4].Date_Month[12]",
+      "form1[0].#subform[4].Date_Day[12]",
+      "form1[0].#subform[4].Date_Year[12]"
+     ],
+     "status": "VERIFIED"
+    }
+   ]
+  },
+  "10182": {
+   "title": "Decision Review Request: Board Appeal (Notice of Disagreement)",
+   "revision": "JUN 2026",
+   "vagov_url": "https://www.va.gov/find-forms/about-form-10182/",
+   "vagov_revision": "June 2026",
+   "pdf_url": "https://www.va.gov/vaforms/va/pdf/VA10182.pdf",
+   "section": "PART III - SPECIFIC ISSUE(S) TO BE APPEALED TO A VETERANS LAW JUDGE AT THE BOARD",
+   "page": 1,
+   "columns": [
+    {
+     "issue_field": "specific_issue",
+     "label": "A. Specific Issue(s)",
+     "fields": [
+      "form1[0].#subform[0].Table1[0].Row1[0].SpecificIssues1[0]",
+      "form1[0].#subform[0].Table1[0].Row2[0].SpecificIssues2[0]",
+      "form1[0].#subform[0].Table1[0].Row3[0].SpecificIssues3[0]",
+      "form1[0].#subform[0].Table1[0].Row4[0].SpecificIssues4[0]",
+      "form1[0].#subform[0].Table1[0].Row5[0].SpecificIssues5[0]"
+     ],
+     "status": "VERIFIED"
+    },
+    {
+     "issue_field": "decision_date",
+     "label": "B. Date of Decision",
+     "fields": [
+      "form1[0].#subform[0].Table1[0].Row1[0].DateDecision1[0]",
+      "form1[0].#subform[0].Table1[0].Row2[0].DateDecision2[0]",
+      "form1[0].#subform[0].Table1[0].Row3[0].DateDecision3[0]",
+      "form1[0].#subform[0].Table1[0].Row4[0].DateDecision4[0]",
+      "form1[0].#subform[0].Table1[0].Row5[0].DateDecision5[0]"
+     ],
+     "status": "VERIFIED"
+    }
+   ]
+  },
+  "21P-534EZ": {
+   "title": "Application for D.I.C., Survivors Pension, and/or Accrued Benefits",
+   "revision": "AUG 2025",
+   "vagov_url": "https://www.va.gov/find-forms/about-form-21p-534ez/",
+   "vagov_revision": "August 2025",
+   "pdf_url": "https://www.vba.va.gov/pubs/forms/VBA-21P-534EZ-ARE.pdf",
+   "section": "SECTION VII: DEPENDENCY AND INDEMNITY COMPENSATION (D.I.C.)",
+   "page": 14,
+   "columns": [
+    {
+     "issue_field": "benefit",
+     "label": "7A. WHAT BENEFIT ARE YOU CLAIMING?",
+     "fields": [
+      "form1[0].#subform[152].Dependency_And_Indemnity_Compensation_DIC[0]"
+     ],
+     "status": "VERIFIED"
+    }
+   ]
+  }
+ }
+}
