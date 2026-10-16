@@ -73,9 +73,7 @@ def opinion_vault(tmp_path):
 
 
 def quote(v, text):
-    return pi._check_quote(
-        v, {"file": "opinion-fake.txt", "page": 1, "quote": text}, BOT
-    )
+    return pi.cite_quote(v, {"file": "opinion-fake.txt", "page": 1, "quote": text}, BOT)
 
 
 # ---- HIGH 1: eCFR fixture pinned, URLs allowlisted ----------------------
@@ -126,8 +124,9 @@ def test_report_urls_all_ecfr(vault):
     ],
 )
 def test_quote_must_not_drop_negation(opinion_vault, text):
-    with pytest.raises(ValueError):
-        quote(opinion_vault, text)
+    # Round 9: cited with context and flagged, never refused or dropped.
+    out = quote(opinion_vault, text)
+    assert pi.FLAG_WIDENED in out["flags"] and pi.FLAG_NEGATIVE in out["flags"]
 
 
 @pytest.mark.parametrize(
@@ -139,7 +138,7 @@ def test_quote_must_not_drop_negation(opinion_vault, text):
     ],
 )
 def test_clause_start_quotes_accepted(opinion_vault, text):
-    quote(opinion_vault, text)
+    assert quote(opinion_vault, text)["quote"] == text
 
 
 def test_negation_word_list():

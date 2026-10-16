@@ -18,7 +18,7 @@ description: Identify related or secondary conditions (via §3.310 and links doc
 ## Stop rules
 
 - Never present a row as a claim or as claimable.
-- No candidate without a CFR quote or a record quote supporting the link.
+- No candidate without a CFR quote or a record quote cited for the link; the person reading decides what the quote shows.
 - No medical speculation; describe only what the source says.
 
 ## Output template
