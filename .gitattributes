@@ -1,0 +1,5 @@
+# Keep LF line endings on every OS so the pinned data hashes match.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.pdf binary

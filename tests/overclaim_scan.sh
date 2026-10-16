@@ -15,7 +15,11 @@ skip=(
   tests/test_round7.py
   tests/test_vault.py
 )
-mapfile -t files < <(git ls-files | grep -Fxv -f <(printf '%s\n' "${skip[@]}"))
+# A while-read loop instead of mapfile, so this also runs on macOS bash 3.2.
+files=()
+while IFS= read -r line; do
+  files+=("$line")
+done < <(git ls-files | grep -Fxv -f <(printf '%s\n' "${skip[@]}"))
 # Normalize dashes and runs of spaces first so "zero–retention" or
 # "records stay  local" cannot slip past the phrase list.
 found=0
