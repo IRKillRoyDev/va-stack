@@ -51,6 +51,13 @@ def vault(tmp_path):
     v.close()
 
 
+def save_one(vault, row_id, answer, text=None, bot_id=BOT):
+    """Write one answer the only way the vault allows: Confirm all + token."""
+    token = vault._issue_confirm_token(bot_id)
+    item = {"row_id": row_id, "answer": answer, "text": text}
+    return vault.save_reviews([item], bot_id=bot_id, confirm_token=token)["results"][0]
+
+
 def report(vault):
     return pi.build_report(copy.deepcopy(INPUT), vault, bot_id=BOT)
 
@@ -104,7 +111,7 @@ def test_every_row_starts_unreviewed(vault):
 
 def test_yes_makes_row_final(vault):
     rid = report(vault)["cited_report"][1]["row_id"]
-    vault.save_review(rid, "Yes", bot_id=BOT)
+    save_one(vault, rid, "Yes", bot_id=BOT)
     row = report(vault)["cited_report"][1]
     assert row["final"] is True and row["review"]["answer"] == "yes"
     assert pi.USER_UPDATED not in row["flags"]
@@ -113,7 +120,7 @@ def test_yes_makes_row_final(vault):
 def test_no_with_text_flagged_and_original_kept(vault):
     before = report(vault)["cited_report"][1]
     rid = before["row_id"]
-    out = vault.save_review(rid, "No", TYPED, bot_id=BOT)
+    out = save_one(vault, rid, "No", TYPED, bot_id=BOT)
     assert out["saved"] is True and out["warning"] is None
     rep = report(vault)
     row = rep["cited_report"][1]
@@ -131,8 +138,12 @@ def test_no_with_text_flagged_and_original_kept(vault):
 
 def test_typed_pii_redacted_with_warning(vault):
     rid = report(vault)["cited_report"][1]["row_id"]
-    out = vault.save_review(
-        rid, "No", "Name: Jane Fakename, SSN 123-45-6789, said ringing.", bot_id=BOT
+    out = save_one(
+        vault,
+        rid,
+        "No",
+        "Name: Jane Fakename, SSN 123-45-6789, said ringing.",
+        bot_id=BOT,
     )
     assert out["warning"] and "SSN" in out["warning"] and "NAME" in out["warning"]
     text = report(vault)["cited_report"][1]["user_update"]["text"]
@@ -142,7 +153,7 @@ def test_typed_pii_redacted_with_warning(vault):
 @pytest.mark.parametrize("typed", ["", "   ", None])
 def test_empty_no_stays_unfinal(vault, typed):
     rid = report(vault)["cited_report"][1]["row_id"]
-    out = vault.save_review(rid, "No", typed, bot_id=BOT)
+    out = save_one(vault, rid, "No", typed, bot_id=BOT)
     assert out["saved"] is False
     row = report(vault)["cited_report"][1]
     assert row["final"] is False and row["review"]["status"] == "needs your text"
@@ -152,7 +163,7 @@ def test_empty_no_stays_unfinal(vault, typed):
 @pytest.mark.parametrize("answer", ["Edit", "edit", "maybe", ""])
 def test_no_edit_path(vault, answer):
     with pytest.raises(rv.VaultError):
-        vault.save_review("row-1", answer, bot_id=BOT)
+        save_one(vault, "row-1", answer, bot_id=BOT)
     assert not hasattr(vault, "edit_review")
     assert "Edit" not in json.dumps(report(vault)["review"])
 
@@ -162,9 +173,9 @@ def test_nexus_only_from_user_answer(vault):
     rep = report(vault)
     assert all(r[NEXUS] == "" for r in rep["form"]["rows"])
     rows = rep["cited_report"]
-    vault.save_review(rows[0]["row_id"], "Yes", bot_id=BOT)
-    vault.save_review(rows[1]["row_id"], "No", TYPED, bot_id=BOT)
-    vault.save_review(rows[2]["row_id"], "No", "", bot_id=BOT)
+    save_one(vault, rows[0]["row_id"], "Yes", bot_id=BOT)
+    save_one(vault, rows[1]["row_id"], "No", TYPED, bot_id=BOT)
+    save_one(vault, rows[2]["row_id"], "No", "", bot_id=BOT)
     form = report(vault)["form"]["rows"]
     assert form[0][NEXUS].startswith("Confirmed by you (Yes): ")
     assert rows[0]["links"][0]["quote"] in form[0][NEXUS]
@@ -181,7 +192,7 @@ def test_review_local_stored_and_logged(vault, monkeypatch):
 
     monkeypatch.setattr(socket, "socket", no_net)
     monkeypatch.setattr(socket, "create_connection", no_net)
-    vault.save_review(rid, "No", TYPED, bot_id=BOT)
+    save_one(vault, rid, "No", TYPED, bot_id=BOT)
     vault.save_file_feedback("Audiogram 2024", "Name on page 3", bot_id=BOT)
     stored = vault.get_review(rid, bot_id=BOT)
     assert stored["answer"] == "no" and stored["text"] == TYPED
