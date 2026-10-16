@@ -619,7 +619,8 @@ def cite_quote(vault, ev: dict, bot_id: str) -> dict:
     if check is not None:
         found = check(link, raw_quote, cited, bot_id=bot_id)
     else:
-        found = _ls.contains_quote(raw, raw_quote)
+        # Tagged quotes are compared only in redacted form (done above).
+        found = "[REDACTED-" in quote or _ls.contains_quote(raw, raw_quote)
     if not found:
         raise ValueError(NOT_FOUND)
     after = units[slice(last + 1, hi)]
@@ -675,8 +676,18 @@ CONFUSABLES = str.maketrans(
     "\u0406\u0405\u0408\u041a\u041c\u041d\u0422\u0412"
     "\u03bf\u03b1\u03b5\u03b9\u03ba\u03bd\u03c1\u03c4\u03c5\u03c7"
     "\u039f\u0391\u0395\u0399\u039a\u039d\u03a1\u03a4\u03a5\u03a7"
-    "\u0392\u0397\u039c\u0396",
-    "aeopcyxisjkmhtbAEOPCYXISJKMHTB" "oaeiknptux" "OAEIKNPTYX" "BHMZ",
+    "\u0392\u0397\u039c\u0396"
+    # small capitals (\u1d0f\u1d1b and friends)
+    "\u1d00\u0299\u1d04\u1d05\u1d07\ua730\u0262\u029c\u026a\u1d0a\u1d0b"
+    "\u029f\u1d0d\u0274\u1d0e\u1d0f\u1d18\ua7af\u0280\ua731\u1d1b\u1d1c"
+    "\u1d20\u1d21\u028f\u1d22",
+    "aeopcyxisjkmhtbAEOPCYXISJKMHTB"
+    "oaeiknptux"
+    "OAEIKNPTYX"
+    "BHMZ"
+    "abcdefghijk"
+    "lmnnopqrstu"
+    "vwyz",
 )
 APOSTROPHES = str.maketrans(dict.fromkeys("\u2018\u2019\u02bc\u2032\uff07`\u00b4", "'"))
 
@@ -687,6 +698,12 @@ def fold_for_negation(text: str) -> str:
     When to use: on every context window before NEGATION.search(), so
     "doesn\u2019t", a Cyrillic "o" in "not", or fullwidth "NOT" still match.
     """
+    if "\u00ad" in text:
+        # A soft hyphen is checked both as a word break and as a deletion
+        # ("not\u00adrelated" and "neg\u00adative" both match).
+        return "\n".join(
+            fold_for_negation(text.replace("\u00ad", v)) for v in (" ", "")
+        )
     text = _ls.strip_invisible(text).translate(APOSTROPHES)  # before NFKC
     text = unicodedata.normalize("NFKC", text)
     return text.translate(CONFUSABLES).translate(APOSTROPHES)
@@ -709,7 +726,12 @@ NEGATION = re.compile(
     r"|improbable|contrary|unsupported|rather than|outweigh(?:s|ed)?"
     # round 11 additions
     r"|doesnt|isnt|cant|wont|less likely|refuted|negates|excludes|precludes"
-    r"|doubt|questionable|non-?service[- ]connected)\b|n't\b"
+    r"|doubt|questionable|non-?service[- ]connected"
+    # round 12 additions
+    r"|improbabl[ey]|less probable|dubious|non[- ]?service[- ]connected"
+    r"|ruled[- ]out|r/o|w/o|non-?contributory|less than likely)\b|n't\b"
+    # any "N percent" / "N%" with N below 50 (0-49.99)
+    r"|(?<![\d.])[0-4]?\d(?:\.\d+)?\s*(?:%|percent\b|per cent\b)"
     r"|\b(?:below|under|at most)(?:\s+\w+){0,2}\s+(?:50|fifty)\b"
     # any "less than ... 50" or "50 ... or less", in digits or words
     r"|\bless than(?:\s+\w+){0,2}\s+(?:50|fifty)\b"

@@ -248,9 +248,17 @@ def run_review(report: dict, vault, bot_id: str, on_ready=None) -> int:
                     line, text="Edit", command=lambda i=r["edit"]: (s.edit(i), draw())
                 ).pack(side="right")
 
+            tk.Label(
+                body,
+                text=f"{rs.PHRASE_PROMPT} {v['confirm_phrase']}",
+                font=big,
+            ).pack(pady=(10, 2))
+            phrase = tk.Entry(body, font=big, width=24)
+            phrase.pack(pady=2)
+
             def confirm() -> None:
                 try:
-                    out = s.confirm_all(vault, bot_id)
+                    out = s.confirm_all(vault, bot_id, phrase=phrase.get())
                 except ValueError as exc:
                     messagebox.showinfo("Not finished", str(exc))
                     return

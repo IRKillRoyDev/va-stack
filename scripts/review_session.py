@@ -13,6 +13,7 @@ vault is unlocked and the report is built.
 from __future__ import annotations
 
 import importlib.util
+import secrets
 import sys
 from pathlib import Path
 
@@ -34,9 +35,21 @@ redact = pi.redact
 
 QUESTION = "Does this match what your record means?"
 NAMES_CHECK = "Check for names we didn't hide."
+PHRASE_PROMPT = "To save, type this back:"
+_PHRASE_WORDS = (
+    "amber anchor apple birch canyon cedar cloud coral delta ember fern"
+    " harbor juniper lantern maple meadow orbit pebble prairie quartz river"
+    " saddle spruce summit thistle timber valley willow"
+).split()
+
+
+def _new_phrase() -> str:
+    """Two random words and two digits, e.g. "maple river 42"."""
+    words = [secrets.choice(_PHRASE_WORDS) for _ in range(2)]
+    return " ".join([*words, f"{secrets.randbelow(100):02d}"])
+
+
 KEYS = {
-    "Return": "Yes",
-    "KP_Enter": "Yes",
     "y": "Yes",
     "n": "No",
     "Escape": "Back",
@@ -61,6 +74,9 @@ class ReviewSession:
         self.screen = "step" if self.rows else "summary"
         self.answers: dict[str, dict] = {}
         self.from_summary = False
+        # Typed back before Confirm all, so a pasted or auto-repeated key
+        # stream cannot confirm the review on its own.
+        self.confirm_phrase = _new_phrase()
 
     # ---- navigation ---------------------------------------------------
     def _advance(self) -> None:
@@ -146,6 +162,7 @@ class ReviewSession:
             out = {"screen": self.screen, **self.summary()}
             out["buttons"] = ["Confirm all", "Back"] if self.screen == "summary" else []
             out["names_check"] = NAMES_CHECK
+            out["confirm_phrase"] = self.confirm_phrase
             return out
         row = self.rows[self.index]
         first = row["pointers"][0]
@@ -165,6 +182,7 @@ class ReviewSession:
             "note": row["note"],
             "question": QUESTION,
             "names_check": NAMES_CHECK,
+            "confirm_phrase": self.confirm_phrase,
             "buttons": ["Yes", "No", "Back", "Next"],
         }
         if self.screen == "type":
@@ -172,10 +190,18 @@ class ReviewSession:
             view["buttons"] = ["Save my text", "Back"]
         return view
 
-    def confirm_all(self, vault, bot_id: str) -> dict:
-        """Save every answer to the vault in one step (Confirm all)."""
+    def confirm_all(self, vault, bot_id: str, phrase: str | None = None) -> dict:
+        """Save every answer to the vault in one step (Confirm all).
+
+        The user must type back confirm_phrase (case and spacing ignored).
+        """
         if self.screen != "summary" or not self.summary()["can_confirm"]:
             raise ValueError("answer every row (Yes, or No with your text) first")
+        typed = " ".join((phrase or "").lower().split())
+        if typed != self.confirm_phrase:
+            raise ValueError(
+                f"{PHRASE_PROMPT} {self.confirm_phrase} (nothing was saved yet)"
+            )
         items = [
             {"row_id": r["row_id"], **self.answers[r["row_id"]]} for r in self.rows
         ]
@@ -189,8 +215,9 @@ def run_cli(report: dict, vault, bot_id: str, input_fn=input, say=print) -> int:
     """Walk the same review in a terminal. Returns 0 when confirmed.
 
     When to use: when there is no display for the tkinter window.
-    Keys: Enter = Yes, n = No, b = Back, x = Next; on the summary,
-    e N = edit row N, c = Confirm all, b = Back.
+    Keys: y = Yes, n = No, b = Back, x = Next (Enter alone is not a Yes);
+    on the summary, e N = edit row N, c = Confirm all (then type back the
+    phrase shown), b = Back.
     """
     s = ReviewSession(report)
     while True:
@@ -204,13 +231,14 @@ def run_cli(report: dict, vault, bot_id: str, input_fn=input, say=print) -> int:
                 say(f"Check: {flag}")
             say(v["note"])
             say(v["names_check"])
-            say(v["question"] + "  Yes [Enter]  No [n]  Back [b]  Next [x]")
+            say(v["question"] + "  Yes [y]  No [n]  Back [b]  Next [x]")
             cmd = input_fn("> ").strip().lower()
-            s.press(
-                {"": "Yes", "y": "Yes", "n": "No", "b": "Back", "x": "Next"}.get(
-                    cmd, ""
-                )
-            )
+            choice = {"y": "Yes", "yes": "Yes", "n": "No", "no": "No", "b": "Back"}
+            choice.update({"x": "Next"})
+            if cmd not in choice:
+                say("Type y for Yes, n for No, b for Back or x for Next.")
+                continue
+            s.press(choice[cmd])
         elif v["screen"] == "type":
             say(v["prompt"])
             say(v["names_check"])
@@ -226,8 +254,13 @@ def run_cli(report: dict, vault, bot_id: str, input_fn=input, say=print) -> int:
             say("Confirm all [c]  Back [b]  Edit a row [e N]")
             cmd = input_fn("> ").strip().lower()
             if cmd == "c":
+                if not v["can_confirm"]:
+                    say("answer every row (Yes, or No with your text) first")
+                    continue
+                say(f"{PHRASE_PROMPT} {v['confirm_phrase']}")
+                typed = input_fn("> ")
                 try:
-                    out = s.confirm_all(vault, bot_id)
+                    out = s.confirm_all(vault, bot_id, phrase=typed)
                 except ValueError as exc:
                     say(str(exc))
                     continue
