@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Validate claim-submission track step lists (fictional fixtures).
-Rules: tracks A, B1, B2 all present; as_of set; step 1 is source validation;
-every step cites a va.gov URL or a 38 CFR section; no step submits, signs, or contacts VA.
+Rules: tracks A1, A2, B1, B2, C all present; as_of set; step 1 is source validation;
+every step cites a va.gov URL, a govinfo 10 U.S.C. URL, DoDI 1332.18, or a 38 CFR section; no step submits, signs, or contacts VA.
 The bad fixture must be rejected."""
 import json, re, sys
 from pathlib import Path
 F = Path(__file__).resolve().parent / "fixtures"
-CITE = re.compile(r"^(https://www\.va\.gov/\S+|38 CFR §3\.\d+)$")
+CITE = re.compile(r"^(https://www\.va\.gov/\S+|https://www\.govinfo\.gov/\S+|DoDI 1332\.18|38 CFR §(3|14|20)\.\d+)$")
 FORBID = re.compile(r"\b(submit|sign|upload|fax|mail|call|contact)\b", re.I)
 
 def check(p):
@@ -24,7 +24,7 @@ def check(p):
 
 fail = False
 names = {p.stem for p in (F / "submission-tracks").glob("*.json")}
-for need in ("track-a-active-duty", "track-b1-initial", "track-b2-already-filed"):
+for need in ("track-a1-active-duty-bdd", "track-a2-ides", "track-b1-initial", "track-b2-already-filed", "track-c-survivors"):
     if need not in names: print("ERROR: missing", need); fail = True
 for p in sorted((F / "submission-tracks").glob("*.json")):
     e = check(p); print(p.name, "OK" if not e else e); fail |= bool(e)

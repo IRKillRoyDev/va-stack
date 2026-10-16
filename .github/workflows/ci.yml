@@ -26,4 +26,4 @@ jobs:
       - name: claim-submission guardrails present
         run: |
           f=skills/claim-submission/SKILL.md
-          grep -q 'never submits' "$f" && grep -q 'Step 0: Ask which track' "$f" && grep -q 'Track B2' "$f" && grep -q '§3.155' "$f" || { echo "claim-submission guardrails missing"; exit 1; }
+          grep -q 'never submits' "$f" && grep -q 'Step 0: Ask which track' "$f" && grep -q 'Track B2' "$f" && grep -q 'Track C' "$f" && grep -q 'Track A2' "$f" && grep -q 'PEBLO' "$f" && grep -q '§20.202' "$f" && grep -q '§3.155' "$f" || { echo "claim-submission guardrails missing"; exit 1; }
