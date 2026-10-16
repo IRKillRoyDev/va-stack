@@ -89,6 +89,140 @@ def run(db_path: Path, bot_id: str) -> int:
     return result["code"]
 
 
+def run_review(report: dict, vault, bot_id: str) -> int:
+    """Show the checkout-style review window; 0 when confirmed, 1 if closed.
+
+    When to use: after Unlock, with a built report. All logic lives in
+    review_session.ReviewSession (shared with the text fallback); this only
+    draws it: one row per screen, big Yes and No buttons, Back and Next,
+    a summary cart with Edit links, and one Confirm all button. Keys:
+    Enter = Yes, n = No, Esc = Back, Right = Next. Needs a display and the
+    tkinter package; falls back to review_session.run_cli() without them.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "review_session", Path(__file__).resolve().parent / "review_session.py"
+    )
+    rs = sys.modules.get("review_session") or importlib.util.module_from_spec(spec)
+    if "review_session" not in sys.modules:
+        sys.modules["review_session"] = rs
+        spec.loader.exec_module(rs)
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+    except ImportError:
+        return rs.run_cli(report, vault, bot_id)
+
+    s = rs.ReviewSession(report)
+    root = tk.Tk()
+    root.title("Review your records")
+    big = ("TkDefaultFont", 16)
+    body = tk.Frame(root, padx=20, pady=20)
+    body.pack(fill="both", expand=True)
+    result = {"code": 1}
+
+    def draw() -> None:
+        for child in body.winfo_children():
+            child.destroy()
+        v = s.view()
+        if v["screen"] in ("step", "type"):
+            tk.Label(body, text=v["progress"], font=big).pack(anchor="w")
+            bar = tk.Canvas(body, height=12, width=400, bg="#ddd")
+            done, total = (int(x) for x in v["progress"].split(" of "))
+            bar.create_rectangle(0, 0, 400 * done // total, 12, fill="#3a7")
+            bar.pack(anchor="w", pady=(0, 10))
+            tk.Label(body, text=v["condition"], font=big).pack(anchor="w")
+            tk.Label(body, text=v["reading"], wraplength=640, justify="left").pack(
+                anchor="w"
+            )
+            ctx = tk.Text(body, height=6, width=80, wrap="word")
+            ctx.insert("1.0", v["context"])
+            ctx.configure(state="disabled")
+            ctx.pack(pady=6)
+            where = f"Where: {v['pointer']} ({v['where']})"
+            tk.Label(body, text=where).pack(anchor="w")
+            for flag in v["flags"]:
+                tk.Label(body, text="Check: " + flag, fg="#a40").pack(anchor="w")
+            tk.Label(body, text=v["note"]).pack(anchor="w")
+        if v["screen"] == "step":
+            tk.Label(body, text=v["question"], font=big).pack(pady=8)
+            row = tk.Frame(body)
+            row.pack()
+            for name in ("Yes", "No"):
+                tk.Button(
+                    row,
+                    text=name,
+                    font=big,
+                    width=10,
+                    height=2,
+                    command=lambda n=name: (s.press(n), draw()),
+                ).pack(side="left", padx=10)
+        elif v["screen"] == "type":
+            tk.Label(body, text=v["prompt"], wraplength=640, justify="left").pack()
+            box = tk.Text(body, height=5, width=80, wrap="word")
+            box.pack(pady=6)
+            box.focus_set()
+
+            def save() -> None:
+                out = s.type_text(box.get("1.0", "end"))
+                if out["warning"]:
+                    messagebox.showwarning("Personal details hidden", out["warning"])
+                draw()
+
+            tk.Button(body, text="Save my text", font=big, command=save).pack()
+        elif v["screen"] == "summary":
+            tk.Label(body, text="Summary", font=big).pack(anchor="w")
+            for r in v["rows"]:
+                line = tk.Frame(body)
+                line.pack(fill="x")
+                tk.Label(line, text=f"{r['condition']}: {r['status']}").pack(
+                    side="left"
+                )
+                tk.Button(
+                    line, text="Edit", command=lambda i=r["edit"]: (s.edit(i), draw())
+                ).pack(side="right")
+
+            def confirm() -> None:
+                try:
+                    out = s.confirm_all(vault, bot_id)
+                except ValueError as exc:
+                    messagebox.showinfo("Not finished", str(exc))
+                    return
+                for w in out["warnings"]:
+                    messagebox.showwarning("Personal details hidden", w)
+                result["code"] = 0
+                root.destroy()
+
+            tk.Button(
+                body,
+                text="Confirm all",
+                font=big,
+                width=14,
+                height=2,
+                state="normal" if v["can_confirm"] else "disabled",
+                command=confirm,
+            ).pack(pady=10)
+        nav = tk.Frame(body)
+        nav.pack(fill="x", pady=8)
+        tk.Button(
+            nav, text="Back", font=big, command=lambda: (s.press("Back"), draw())
+        ).pack(side="left")
+        if v["screen"] == "step":
+            tk.Button(
+                nav, text="Next", font=big, command=lambda: (s.press("Next"), draw())
+            ).pack(side="right")
+
+    def on_key(event) -> None:
+        if s.view()["screen"] == "type" and event.keysym not in ("Escape",):
+            return
+        s.key(event.keysym)
+        draw()
+
+    root.bind("<Key>", on_key)
+    draw()
+    root.mainloop()
+    return result["code"]
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments and open the Unlock window.
 

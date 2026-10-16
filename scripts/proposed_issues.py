@@ -449,7 +449,8 @@ def _form_rows(
         values = {
             "condition": issue["condition"],
             "in_service_event": issue.get("in_service_event", ""),
-            "explanation": " ".join([cite["label"], *cite["flags"]]),
+            # Only the user's Yes or saved No text; never the tool on its own.
+            "explanation": cite.get("nexus", ""),
             "approx_date": issue.get("approx_date", ""),
             "specific_issue": f"Service connection for {issue['condition']}",
             "decision_date": issue.get("decision_date", ""),
@@ -520,6 +521,26 @@ FLAG_BOUNDARY = (
     " or hedge sits just outside the context; read the context."
 )
 NO_FLAG_NOTE = "No flag does not mean the opinion is positive."
+USER_UPDATED = records_vault.USER_UPDATED
+REVIEW_PROMPT = (
+    "Please review your file. Open each record page at the vault link shown"
+    " for each row (page, line and date are given) and answer Yes or No:"
+    " (a) confirm or correct what each quote means, especially rows flagged"
+    f' "{FLAG_NEGATIVE}", "{FLAG_WIDENED}" or "{FLAG_BOUNDARY}";'
+    " (b) list anything in the file that is missing from the report;"
+    " (c) list any names or personal details that redaction missed."
+    " A row is not final until you answer it. Your review is the final check."
+)
+NO_PROMPT = (
+    "You answered No. Please type the rest of the missing sentence or paragraph"
+    " from your record. Leave out names, Social Security numbers, dates of birth,"
+    " addresses, phone numbers and other personal details (PII). What you type"
+    " is checked and redacted again before it is saved, and the row is marked"
+    f" {USER_UPDATED}."
+)
+_POINTER_DATE = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}\b|\b\d{2}-\d{2}-\d{4}\b|\[DATE-\d{4}\]"
+)
 CONTEXT_SENTENCES = 2
 _ABBREV_LIKE = re.compile(r"(?:[A-Za-z]\.){2,}|[A-Za-z]{1,4}\.")
 
@@ -595,7 +616,21 @@ def cite_quote(vault, ev: dict, bot_id: str) -> dict:
         "flags": flags,
         "label": LABEL,
         "note": NO_FLAG_NOTE,
+        "line": _line_of(page, cited),
+        "date": (m.group(0) if (m := _POINTER_DATE.search(cited)) else None),
     }
+
+
+def _line_of(page: str, cited: str) -> int:
+    """1-based page line where the cited sentence starts (1 if unsure).
+
+    When to use: for the pointer that sends the user to the record line.
+    """
+    head = " ".join(cited.split()[slice(0, 3)])
+    for n, line in enumerate(page.splitlines(), 1):
+        if head and head in " ".join(line.split()):
+            return n
+    return 1
 
 
 def _beyond(units: list[str]) -> list[str]:
@@ -722,9 +757,29 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                     "flags": cite["flags"],
                     "label": cite["label"],
                     "note": cite["note"],
+                    "line": cite["line"],
+                    "date": cite["date"],
                 }
             )
-        row_flags = list(dict.fromkeys(f for ln in links for f in ln["flags"]))
+        tool_flags = list(dict.fromkeys(f for ln in links for f in ln["flags"]))
+        row_id = "row-%d-%s" % (
+            len(rows) + 1,
+            hashlib.sha256(f"{issue['condition']}|{issue['dc']}".encode()).hexdigest()[
+                slice(0, 12)
+            ],
+        )
+        pointers = [
+            {k: ln[k] for k in ("link", "page", "line", "date")} for ln in links
+        ]
+        flag_pointers = [
+            {"flag": f, **{k: ln[k] for k in ("link", "page", "line", "date")}}
+            for ln in links
+            for f in ln["flags"]
+        ]
+        review, user_update, nexus = _review_state(vault, row_id, links, bot_id)
+        row_flags = tool_flags + ([USER_UPDATED] if user_update else [])
+        if user_update:
+            flag_pointers.append({"flag": USER_UPDATED, **pointers[0]})
         if isinstance(level, int):
             numeric.append(level)
         rows.append(
@@ -738,6 +793,17 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                 "label": LABEL,
                 "flags": row_flags,
                 "note": NO_FLAG_NOTE,
+                "row_id": row_id,
+                "pointers": pointers,
+                "flag_pointers": flag_pointers,
+                "review": review,
+                "final": review["final"],
+                "tool_reading": {
+                    "quotes": [ln["quote"] for ln in links],
+                    "flags": tool_flags,
+                },
+                "user_update": user_update,
+                "nexus": nexus,
                 "estimate": level,
                 "rating_wording": {
                     "section": dc["section"] if dc else None,
@@ -781,10 +847,49 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
         "form": _form_rows(
             form_name,
             data["issues"],
-            [{"label": r["label"], "flags": r["flags"]} for r in rows],
+            [
+                {"label": r["label"], "flags": r["flags"], "nexus": r["nexus"]}
+                for r in rows
+            ],
         ),
+        "review": {
+            "prompt": REVIEW_PROMPT,
+            "choices": ["Yes", "No"],
+            "on_no": NO_PROMPT,
+            "rows": [
+                {"row_id": r["row_id"], "pointers": r["pointers"], "final": r["final"]}
+                for r in rows
+            ],
+            "file_feedback": (
+                vault.get_file_feedback(bot_id=bot_id)
+                if hasattr(vault, "get_file_feedback")
+                else None
+            ),
+        },
         "combined": combined,
     }
+
+
+def _review_state(vault, row_id: str, links: list[dict], bot_id: str):
+    """Return (review, user_update, nexus) for a row from the vault.
+
+    When to use: inside build_report(). Every row starts unreviewed. A row
+    is final after Yes, or after No with the user's typed text saved. The
+    nexus wording comes only from a Yes (the cited quotes) or that text.
+    """
+    get = getattr(vault, "get_review", None)
+    saved = get(row_id, bot_id=bot_id) if get else None
+    if saved is None:
+        return {"status": "unreviewed", "final": False}, None, ""
+    if saved["answer"] == "yes":
+        nexus = "Confirmed by you (Yes): " + " ".join(ln["quote"] for ln in links)
+        return {"status": "final", "final": True, "answer": "yes"}, None, nexus
+    if not saved["text"]:
+        review = {"status": "needs your text", "final": False, "answer": "no"}
+        return review, None, ""
+    update = {"text": saved["text"], "flag": saved["flag"], "ts": saved["ts"]}
+    review = {"status": "final", "final": True, "answer": "no"}
+    return review, update, f"{USER_UPDATED}: {saved['text']}"
 
 
 def main(argv: list[str] | None = None) -> int:

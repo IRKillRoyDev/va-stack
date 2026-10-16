@@ -264,7 +264,17 @@ CREATE TABLE IF NOT EXISTS access_log (
     seq INTEGER PRIMARY KEY, ts TEXT NOT NULL, session_id TEXT NOT NULL,
     consent_version TEXT NOT NULL, bot_id TEXT NOT NULL, action TEXT NOT NULL,
     detail TEXT NOT NULL, prev_hash TEXT NOT NULL, hash TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS review (
+    row_id TEXT PRIMARY KEY, answer TEXT NOT NULL, text TEXT, flag TEXT,
+    ts TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS file_feedback (
+    id INTEGER PRIMARY KEY CHECK (id = 1), missing TEXT NOT NULL,
+    missed_pii TEXT NOT NULL, ts TEXT NOT NULL);
 """
+# Flag on a row whose reading the user replaced with their own typed text.
+USER_UPDATED = "USER_UPDATED"
+REVIEW_ANSWERS = ("yes", "no")
+ROW_ID_MAX = 128
 
 
 def create_vault(
@@ -575,6 +585,126 @@ class Vault:
             {"file": local_search.redact(file)[0], "page": page, "hmac": digest},
         )
         return text
+
+    def save_review(
+        self, row_id: str, answer: str, text: str | None = None, *, bot_id: str
+    ) -> dict:
+        """Store the user's Yes or No for one report row, inside the vault.
+
+        When to use: after the user reads the row's record page. Only "Yes"
+        or "No" is accepted (there is no edit path). On No the user types the
+        rest of the missing sentence or paragraph; it is run through redact()
+        anyway (the user was told to leave out PII) and a warning lists what
+        was caught. The text is saved with the USER_UPDATED flag and the time.
+        A No without text is stored but the row stays unfinal. Stays local:
+        no network; logged with a keyed HMAC of the text, never the text.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        ans = (answer or "").strip().lower()
+        if ans not in REVIEW_ANSWERS:
+            raise VaultError("answer must be Yes or No")
+        if not isinstance(row_id, str) or not 0 < len(row_id) <= ROW_ID_MAX:
+            raise VaultError("bad row id")
+        clean, counts = local_search.redact(text or "")
+        clean = clean.strip() if ans == "no" else ""
+        flag = USER_UPDATED if clean else None
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self._conn.execute(
+            "INSERT OR REPLACE INTO review VALUES (?,?,?,?,?)",
+            (row_id, ans, clean or None, flag, ts),
+        )
+        final = ans == "yes" or bool(clean)
+        self._log(
+            bot_id,
+            "review_saved",
+            {
+                "row_id": row_id,
+                "answer": ans,
+                "final": final,
+                "flag": flag,
+                "hmac": self._mac(clean),
+                "redacted": counts,
+            },
+        )
+        warning = None
+        if counts and ans == "no":
+            kinds = ", ".join(sorted(counts))
+            warning = (
+                f"Personal details were found and redacted in your text ({kinds})."
+                " Please check what was saved."
+            )
+        return {"saved": final, "warning": warning, "redacted": counts}
+
+    def save_reviews(self, items: list[dict], bot_id: str) -> dict:
+        """Save a whole confirmed review at once (the Confirm all step).
+
+        When to use: by review_session.ReviewSession.confirm_all(); nothing
+        is written before that. items are {"row_id", "answer", "text"}. One
+        transaction; one review_saved entry per row, then a
+        review_confirmed_all entry. The original report is never changed.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        results = []
+        self._conn.execute("BEGIN")
+        try:
+            for item in items:
+                results.append(
+                    self.save_review(
+                        item["row_id"], item["answer"], item.get("text"), bot_id=bot_id
+                    )
+                )
+            self._log(bot_id, "review_confirmed_all", {"rows": len(items)})
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        return {
+            "saved": sum(r["saved"] for r in results),
+            "warnings": [r["warning"] for r in results if r["warning"]],
+        }
+
+    def get_review(self, row_id: str, bot_id: str) -> dict | None:
+        """Return the stored answer for a row, or None if unreviewed.
+
+        When to use: when building the report. Logged.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        row = self._conn.execute(
+            "SELECT answer, text, flag, ts FROM review WHERE row_id = ?", (row_id,)
+        ).fetchone()
+        self._log(bot_id, "review_read", {"row_id": row_id})
+        if row is None:
+            return None
+        return {"answer": row[0], "text": row[1], "flag": row[2], "ts": row[3]}
+
+    def save_file_feedback(self, missing: str, missed_pii: str, bot_id: str) -> None:
+        """Store what the user found missing and any PII redaction missed.
+
+        When to use: after the user reviews the whole file. The text is
+        redacted before it is stored; logged with a keyed HMAC only.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        miss = local_search.redact(missing or "")[0]
+        pii = local_search.redact(missed_pii or "")[0]
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self._conn.execute(
+            "INSERT OR REPLACE INTO file_feedback VALUES (1,?,?,?)", (miss, pii, ts)
+        )
+        self._log(bot_id, "file_feedback_saved", {"hmac": self._mac(miss + "\n" + pii)})
+
+    def get_file_feedback(self, bot_id: str) -> dict | None:
+        """Return the stored file-level feedback, or None. Logged."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        row = self._conn.execute(
+            "SELECT missing, missed_pii FROM file_feedback WHERE id = 1"
+        ).fetchone()
+        self._log(bot_id, "file_feedback_read", {})
+        return None if row is None else {"missing": row[0], "missed_pii": row[1]}
 
     def quote_in_record(self, link: str, quote: str, bot_id: str) -> bool:
         """Say whether quote appears in the record page before redaction.
