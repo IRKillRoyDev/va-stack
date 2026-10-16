@@ -8,13 +8,16 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 
 ### Recommended: let your bot install it
 
-Your assistant bot can do the install for you. It runs the same commands as the Manual install below, one at a time, and asks you to approve each one before it runs. What the bot does and does not touch:
+Your assistant bot can install and start va-stack for you with one setup script. You approve each step before it runs. The script is safe to run again: it reuses what is already there.
 
-- **It runs:** download va-stack (`git clone`), make the `.venv` folder inside va-stack (`python3 -m venv .venv`, or `py -m venv .venv` on Windows), install va-stack into it (`python -m pip install -e .`), check the encryption, and start the app (`va-stack`).
-- **It never opens** your medical records or your vault. You choose your files in the app window yourself, and only you type the passphrase.
+- **What the bot runs**, from the va-stack folder after `git clone https://github.com/IRKillRoyDev/va-stack.git`:
+  - macOS and Linux: `bash setup.sh`
+  - Windows (PowerShell): `.\setup.ps1`
+- **What the script does:** creates or reuses the `.venv` folder inside va-stack, installs va-stack into it (`python -m pip install -e .`), checks the encryption, makes your vault folder if it is missing, makes the launchers runnable (macOS and Linux), and opens the VA Stack window. Add `--no-launch` (`-NoLaunch` on Windows) to set up without opening it.
+- **What it never touches:** it never opens, reads, moves, overwrites or deletes your vault or your medical records. You choose your files in the app window yourself, and only you type the passphrase.
 - **Where your vault lives:** in your own user folder, outside va-stack and outside `.venv`, so reinstalling never touches it. macOS: `~/Library/Application Support/va-stack`. Windows: `%APPDATA%\va-stack`. Linux: `~/.local/share/va-stack` (or `$XDG_DATA_HOME/va-stack`).
 
-Ask your bot: "Install va-stack for me from github.com/IRKillRoyDev/va-stack and start it. Ask me before each command."
+Ask your bot: "Install va-stack for me from github.com/IRKillRoyDev/va-stack with its setup script and start it. Ask me before each step."
 
 ### Manual install
 
@@ -85,7 +88,7 @@ Open the **Terminal** app (press Cmd+Space, type `Terminal`, press Enter).
 - `Could not find a version that satisfies the requirement sqlcipher3-binary`: your copy is old. In the va-stack folder run `git pull`, then repeat step 6.
 - `No module named venv` or `python3` opens an installer: install Python from python.org (not the Xcode copy), open a new Terminal window, and start again at step 3.
 - `(.venv)` is gone: you opened a new window. Run step 3 and step 5 again.
-- Step 6 tries to build `sqlcipher3` from source (you see `Building wheel for sqlcipher3` and then an error): your Python has no prebuilt wheel (3.9 to 3.14 do). Use Python 3.12 from python.org, or, only as a last resort, install Homebrew from <https://brew.sh>, run `brew install sqlcipher`, and repeat step 6. Step 7 must still print a version.
+- Step 6 tries to build `sqlcipher3` from source (you see `Building wheel for sqlcipher3` and then an error): your Python has no prebuilt wheel (Python 3.10 to 3.14 do). Use Python 3.12 from python.org, or, only as a last resort, install Homebrew from <https://brew.sh>, run `brew install sqlcipher`, and repeat step 6. Step 7 must still print a version.
 
 #### Windows
 
