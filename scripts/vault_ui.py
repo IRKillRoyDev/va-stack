@@ -289,6 +289,8 @@ def run_review(report: dict, vault, bot_id: str, on_ready=None) -> int:
     def on_key(event) -> None:
         if s.view()["screen"] == "type" and event.keysym not in ("Escape",):
             return
+        if isinstance(event.widget, tk.Entry):
+            return  # typing the confirm phrase is not a review key
         s.key(event.keysym)
         draw()
 

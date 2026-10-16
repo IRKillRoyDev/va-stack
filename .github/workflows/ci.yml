@@ -74,4 +74,4 @@ jobs:
         run: |
           python -c "import tkinter; print('tk', tkinter.TkVersion)"
           xvfb-run -a pytest -v -rs tests/test_gui_headless.py | tee gui.txt
-          grep -q "1 passed" gui.txt
+          grep -q "2 passed" gui.txt
