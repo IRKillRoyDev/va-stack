@@ -1,0 +1,36 @@
+{
+  "as_of": "2026-10-14",
+  "claims": [
+    {
+      "condition": "Lumbosacral strain",
+      "basis": "Direct",
+      "cfr": ["38 CFR §3.303", "38 CFR §4.71a"],
+      "dc": "5237",
+      "evidence": [
+        {"file": "va-clinic-fake.txt", "page": 1, "quote": "Diagnosis: lumbosacral strain, chronic."},
+        {"file": "str-fake.txt", "page": 2, "quote": "injured lower back lifting equipment during training"},
+        {"file": "nexus-letter-fake.txt", "page": 1, "quote": "at least as likely as not"}
+      ],
+      "gaps": []
+    },
+    {
+      "condition": "Tinnitus",
+      "basis": "Direct",
+      "cfr": ["38 CFR §3.303", "38 CFR §4.87"],
+      "dc": "6260",
+      "evidence": [
+        {"file": "va-clinic-fake.txt", "page": 3, "quote": "Diagnosis: tinnitus, bilateral."}
+      ],
+      "gaps": ["in-service event not shown", "nexus opinion missing"]
+    }
+  ],
+  "related": [
+    {
+      "condition": "Left lower extremity radiculopathy",
+      "linked_to": "Lumbosacral strain",
+      "link_source": {"cfr": "38 CFR §3.310", "file": "va-clinic-fake.txt", "page": 2, "quote": "numbness radiating down the left leg"},
+      "documentation_needed": ["current diagnosis", "nexus letter", "DBQ"],
+      "status": "needs more documentation"
+    }
+  ]
+}
