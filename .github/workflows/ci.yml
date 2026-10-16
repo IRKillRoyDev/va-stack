@@ -158,3 +158,42 @@ jobs:
           .venv\Scripts\Activate.ps1
           python -m pytest -q -rs
           if ($LASTEXITCODE -ne 0) { exit 1 }
+  setup:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      PY_PYTHON: "3.12"
+      VA_STACK_NO_LAUNCH: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Setup twice keeps the vault (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash setup.sh --no-launch
+          test -x start-va-stack.sh && test -x "Start VA Stack.command"
+          .venv/bin/python tests/ci_vault_hash.py create | tee before.txt
+          bash setup.sh --no-launch
+          .venv/bin/python tests/ci_vault_hash.py hash | tee after.txt
+          diff before.txt after.txt
+          echo "vault unchanged after the second run"
+      - name: Setup twice keeps the vault (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\setup.ps1 -NoLaunch
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .venv\Scripts\python.exe tests\ci_vault_hash.py create | Tee-Object -FilePath before.txt
+          .\setup.ps1 -NoLaunch
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .venv\Scripts\python.exe tests\ci_vault_hash.py hash | Tee-Object -FilePath after.txt
+          if (Compare-Object (Get-Content before.txt) (Get-Content after.txt)) { Write-Error "vault changed"; exit 1 }
+          Write-Host "vault unchanged after the second run"
