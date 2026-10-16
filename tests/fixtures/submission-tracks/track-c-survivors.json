@@ -1,0 +1,55 @@
+{
+ "track": "track-c-survivors",
+ "as_of": "2026-10-16",
+ "steps": [
+  {
+   "step": 1,
+   "action": "validate sources",
+   "cites": [
+    "https://www.va.gov/family-and-caregiver-benefits/survivor-compensation/",
+    "https://www.va.gov/family-and-caregiver-benefits/survivor-compensation/dependency-indemnity-compensation/",
+    "https://www.va.gov/family-and-caregiver-benefits/survivor-compensation/survivors-pension/",
+    "https://www.va.gov/forms/21p-534ez/",
+    "38 CFR \u00a73.5",
+    "38 CFR \u00a73.22",
+    "38 CFR \u00a73.50",
+    "38 CFR \u00a73.152",
+    "38 CFR \u00a73.1000",
+    "38 CFR \u00a73.1010"
+   ]
+  },
+  {
+   "step": 2,
+   "action": "identify benefit and relationship",
+   "cites": [
+    "https://www.va.gov/family-and-caregiver-benefits/survivor-compensation/",
+    "38 CFR \u00a73.5",
+    "38 CFR \u00a73.50"
+   ]
+  },
+  {
+   "step": 3,
+   "action": "gather evidence",
+   "cites": [
+    "38 CFR \u00a73.152",
+    "38 CFR \u00a73.159"
+   ]
+  },
+  {
+   "step": 4,
+   "action": "explain online or form path including accrued benefits",
+   "cites": [
+    "https://www.va.gov/forms/21p-534ez/",
+    "38 CFR \u00a73.1000",
+    "38 CFR \u00a73.1010"
+   ]
+  },
+  {
+   "step": 5,
+   "action": "hand-off checklist and accredited review",
+   "cites": [
+    "38 CFR \u00a714.629"
+   ]
+  }
+ ]
+}

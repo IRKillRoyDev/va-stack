@@ -17,7 +17,9 @@
     "https://www.va.gov/find-forms/about-form-10182/",
     "38 CFR \u00a73.2500",
     "38 CFR \u00a73.2501",
-    "38 CFR \u00a73.2601"
+    "38 CFR \u00a73.2601",
+    "38 CFR \u00a720.202",
+    "38 CFR \u00a720.203"
    ]
   },
   {
@@ -44,6 +46,16 @@
   },
   {
    "step": 5,
+   "action": "Board Appeal lane: explain VA Form 10182 notice of disagreement",
+   "cites": [
+    "https://www.va.gov/decision-reviews/board-appeal/",
+    "https://www.va.gov/find-forms/about-form-10182/",
+    "38 CFR \u00a720.202",
+    "38 CFR \u00a720.203"
+   ]
+  },
+  {
+   "step": 6,
    "action": "hand-off checklist and accredited review",
    "cites": [
     "https://www.va.gov/decision-reviews/"
