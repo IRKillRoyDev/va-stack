@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "va-stack",
+  "version": "0.1.0",
+  "description": "Skills and an agent that help veterans prepare (not file) VA disability claims from primary-source 38 CFR (eCFR), with cited evidence from local private records. Not legal or medical advice.",
+  "author": {
+    "name": "va-stack contributors"
+  },
+  "homepage": "https://github.com/IRKillRoyDev/va-stack",
+  "repository": "https://github.com/IRKillRoyDev/va-stack",
+  "license": "MIT",
+  "keywords": [
+    "va-disability",
+    "38-cfr",
+    "ecfr",
+    "veterans",
+    "claims",
+    "skills"
+  ],
+  "skills": "./skills/",
+  "agents": "./agents/"
+}

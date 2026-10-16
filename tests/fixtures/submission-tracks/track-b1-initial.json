@@ -1,0 +1,58 @@
+{
+ "track": "track-b1-initial",
+ "as_of": "2026-10-16",
+ "steps": [
+  {
+   "step": 1,
+   "action": "validate sources",
+   "cites": [
+    "https://www.va.gov/disability/how-to-file-claim/",
+    "https://www.va.gov/resources/your-intent-to-file-a-va-claim/",
+    "https://www.va.gov/find-forms/about-form-21-0966/",
+    "https://www.va.gov/find-forms/about-form-21-526ez/",
+    "https://www.va.gov/disability/how-to-file-claim/evidence-needed/fully-developed-claims/",
+    "38 CFR \u00a73.150",
+    "38 CFR \u00a73.151",
+    "38 CFR \u00a73.155",
+    "38 CFR \u00a73.159",
+    "38 CFR \u00a73.160"
+   ]
+  },
+  {
+   "step": 2,
+   "action": "explain intent to file",
+   "cites": [
+    "38 CFR \u00a73.155",
+    "https://www.va.gov/resources/your-intent-to-file-a-va-claim/"
+   ]
+  },
+  {
+   "step": 3,
+   "action": "gather evidence from claim-citations",
+   "cites": [
+    "38 CFR \u00a73.159"
+   ]
+  },
+  {
+   "step": 4,
+   "action": "explain online or form path",
+   "cites": [
+    "https://www.va.gov/find-forms/about-form-21-526ez/"
+   ]
+  },
+  {
+   "step": 5,
+   "action": "fully developed vs standard if still offered",
+   "cites": [
+    "https://www.va.gov/disability/how-to-file-claim/evidence-needed/fully-developed-claims/"
+   ]
+  },
+  {
+   "step": 6,
+   "action": "hand-off checklist and accredited review",
+   "cites": [
+    "https://www.va.gov/disability/how-to-file-claim/"
+   ]
+  }
+ ]
+}

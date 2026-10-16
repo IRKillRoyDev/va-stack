@@ -1,0 +1,53 @@
+{
+ "track": "track-a2-ides",
+ "as_of": "2026-10-16",
+ "steps": [
+  {
+   "step": 1,
+   "action": "validate sources",
+   "cites": [
+    "https://www.va.gov/disability/how-to-file-claim/when-to-file/pre-discharge-claim/",
+    "https://www.va.gov/find-forms/about-form-21-526ez/",
+    "https://www.govinfo.gov/link/uscode/10/1201?type=usc&year=mostrecent&link-type=html",
+    "https://www.govinfo.gov/link/uscode/10/1202?type=usc&year=mostrecent&link-type=html",
+    "https://www.govinfo.gov/link/uscode/10/1203?type=usc&year=mostrecent&link-type=html",
+    "https://www.govinfo.gov/link/uscode/10/1210?type=usc&year=mostrecent&link-type=html",
+    "https://www.govinfo.gov/link/uscode/10/1216a?type=usc&year=mostrecent&link-type=html",
+    "DoDI 1332.18",
+    "38 CFR \u00a73.155"
+   ]
+  },
+  {
+   "step": 2,
+   "action": "explain IDES stages: MEB, VA exams and proposed rating, PEB",
+   "cites": [
+    "https://www.va.gov/disability/how-to-file-claim/when-to-file/pre-discharge-claim/",
+    "DoDI 1332.18"
+   ]
+  },
+  {
+   "step": 3,
+   "action": "explain fit vs separation vs retirement including TDRL",
+   "cites": [
+    "https://www.govinfo.gov/link/uscode/10/1201?type=usc&year=mostrecent&link-type=html",
+    "https://www.govinfo.gov/link/uscode/10/1202?type=usc&year=mostrecent&link-type=html",
+    "https://www.govinfo.gov/link/uscode/10/1203?type=usc&year=mostrecent&link-type=html",
+    "https://www.govinfo.gov/link/uscode/10/1210?type=usc&year=mostrecent&link-type=html"
+   ]
+  },
+  {
+   "step": 4,
+   "action": "gather evidence",
+   "cites": [
+    "38 CFR \u00a73.159"
+   ]
+  },
+  {
+   "step": 5,
+   "action": "hand-off checklist, PEBLO and accredited review",
+   "cites": [
+    "38 CFR \u00a714.629"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,262 @@
+{
+ "ecfr_fixture": "tests/fixtures/ecfr-part4-ratings-2026-10-14.json",
+ "as_of": "2026-10-16",
+ "ecfr_date": "2026-10-14",
+ "dcs": {
+  "7806": {
+   "name": "Dermatitis or eczema",
+   "section": "4.118",
+   "formula": "General Rating Formula For The Skin",
+   "levels": [
+    0,
+    10,
+    30,
+    60
+   ],
+   "dc_cite": "7806 Dermatitis or eczema. Evaluate under the General Rating Formula for the Skin",
+   "factors": [
+    {
+     "key": "body_area_percent",
+     "label": "the percent of the entire body affected",
+     "kind": "number",
+     "bands": [
+      {
+       "level": 0,
+       "lt": 5,
+       "cite": "Characteristic lesions involving less than 5 percent of the entire body affected"
+      },
+      {
+       "level": 10,
+       "ge": 5,
+       "lt": 20,
+       "cite": "Characteristic lesions involving at least 5 percent, but less than 20 percent, of the entire body affected"
+      },
+      {
+       "level": 30,
+       "ge": 20,
+       "le": 40,
+       "cite": "Characteristic lesions involving 20 to 40 percent of the entire body"
+      },
+      {
+       "level": 60,
+       "gt": 40,
+       "cite": "Characteristic lesions involving more than 40 percent of the entire body"
+      }
+     ],
+     "not_met": "Records show about {value}% of the entire body affected.",
+     "not_documented": "Records do not document {label}. Ask your provider to document {label} as it is now."
+    },
+    {
+     "key": "exposed_area_percent",
+     "label": "the percent of exposed areas affected",
+     "kind": "number",
+     "bands": [
+      {
+       "level": 0,
+       "lt": 5,
+       "cite": "Characteristic lesions involving less than 5 percent of exposed areas affected"
+      },
+      {
+       "level": 10,
+       "ge": 5,
+       "lt": 20,
+       "cite": "At least 5 percent, but less than 20 percent, of exposed areas affected"
+      },
+      {
+       "level": 30,
+       "ge": 20,
+       "le": 40,
+       "cite": "20 to 40 percent of exposed areas affected"
+      },
+      {
+       "level": 60,
+       "gt": 40,
+       "cite": "more than 40 percent of exposed areas affected"
+      }
+     ],
+     "not_met": "Records show about {value}% of exposed areas affected.",
+     "not_documented": "Records do not document {label}. Ask your provider to document {label} as it is now."
+    },
+    {
+     "key": "treatment",
+     "label": "the type and duration of treatment over the past 12 months",
+     "kind": "category",
+     "bands": [
+      {
+       "level": 0,
+       "in": [
+        "topical"
+       ],
+       "cite": "No more than topical therapy required over the past 12-month period"
+      },
+      {
+       "level": 10,
+       "in": [
+        "intermittent_systemic_lt_6_weeks"
+       ],
+       "cite": "Intermittent systemic therapy including, but not limited to, corticosteroids, phototherapy, retinoids, biologics, photochemotherapy, PUVA, or other immunosuppressive drugs required for a total duration of less than 6 weeks over the past 12-month period"
+      },
+      {
+       "level": 30,
+       "in": [
+        "systemic_6_weeks_or_more"
+       ],
+       "cite": "Systemic therapy including, but not limited to, corticosteroids, phototherapy, retinoids, biologics, photochemotherapy, PUVA, or other immunosuppressive drugs required for a total duration of 6 weeks or more, but not constantly, over the past 12-month period"
+      },
+      {
+       "level": 60,
+       "in": [
+        "constant_systemic"
+       ],
+       "cite": "Constant or near-constant systemic therapy including, but not limited to, corticosteroids, phototherapy, retinoids, biologics, photochemotherapy, psoralen with long-wave ultraviolet-A light (PUVA), or other immunosuppressive drugs required over the past 12-month period"
+      }
+     ],
+     "not_met": "Records show {value} treatment. The next level depends on the type and duration of treatment; ask your provider whether other treatment options fit your condition.",
+     "not_documented": "Records do not document {label}. Ask your provider to document {label} as it is now."
+    }
+   ]
+  },
+  "6260": {
+   "name": "Tinnitus, recurrent",
+   "section": "4.87",
+   "levels": [
+    10
+   ],
+   "dc_cite": "6260 Tinnitus, recurrent 10",
+   "factors": [
+    {
+     "key": "tinnitus",
+     "label": "recurrent tinnitus",
+     "kind": "category",
+     "bands": [
+      {
+       "level": 10,
+       "in": [
+        "recurrent"
+       ],
+       "cite": "Tinnitus, recurrent"
+      }
+     ],
+     "not_met": "Records show {value}.",
+     "not_documented": "Records do not document {label}. Ask your provider to document {label} as it is now."
+    }
+   ]
+  },
+  "5237": {
+   "name": "Lumbosacral or cervical strain (thoracolumbar criteria only)",
+   "section": "4.71a",
+   "formula": "General Rating Formula for Diseases and Injuries of the Spine",
+   "levels": [
+    10,
+    20,
+    40,
+    50,
+    100
+   ],
+   "dc_cite": "5237 Lumbosacral or cervical strain",
+   "factors": [
+    {
+     "key": "forward_flexion_thoracolumbar_degrees",
+     "label": "a forward flexion measurement of the thoracolumbar spine (lower back range of motion)",
+     "kind": "number",
+     "bands": [
+      {
+       "level": 10,
+       "gt": 60,
+       "le": 85,
+       "cite": "Forward flexion of the thoracolumbar spine greater than 60 degrees but not greater than 85 degrees"
+      },
+      {
+       "level": 20,
+       "gt": 30,
+       "le": 60,
+       "cite": "Forward flexion of the thoracolumbar spine greater than 30 degrees but not greater than 60 degrees"
+      },
+      {
+       "level": 40,
+       "ge": 0,
+       "le": 30,
+       "cite": "forward flexion of the thoracolumbar spine 30 degrees or less"
+      }
+     ],
+     "not_met": "Records show forward flexion of about {value} degrees.",
+     "not_documented": "Records do not document {label}. Ask your provider to document {label} as it is now."
+    },
+    {
+     "key": "combined_rom_thoracolumbar_degrees",
+     "label": "the combined range of motion of the thoracolumbar spine",
+     "kind": "number",
+     "bands": [
+      {
+       "level": 10,
+       "gt": 120,
+       "le": 235,
+       "cite": "combined range of motion of the thoracolumbar spine greater than 120 degrees but not greater than 235 degrees"
+      },
+      {
+       "level": 20,
+       "ge": 0,
+       "le": 120,
+       "cite": "the combined range of motion of the thoracolumbar spine not greater than 120 degrees"
+      }
+     ],
+     "not_met": "Records show a combined range of motion of about {value} degrees.",
+     "not_documented": "Records do not document {label}. Ask your provider to document {label} as it is now."
+    },
+    {
+     "key": "muscle_spasm",
+     "label": "whether muscle spasm, guarding, or tenderness is present and whether it affects gait or spinal contour",
+     "kind": "category",
+     "bands": [
+      {
+       "level": 10,
+       "in": [
+        "not_affecting_gait"
+       ],
+       "cite": "muscle spasm, guarding, or localized tenderness not resulting in abnormal gait or abnormal spinal contour"
+      },
+      {
+       "level": 20,
+       "in": [
+        "abnormal_gait_or_contour"
+       ],
+       "cite": "muscle spasm or guarding severe enough to result in an abnormal gait or abnormal spinal contour such as scoliosis, reversed lordosis, or abnormal kyphosis"
+      }
+     ],
+     "not_met": "Records describe {value}.",
+     "not_documented": "Records do not document {label}. Ask your provider to document {label} as it is now."
+    },
+    {
+     "key": "ankylosis",
+     "label": "whether there is ankylosis (fixation) of the spine",
+     "kind": "category",
+     "bands": [
+      {
+       "level": 40,
+       "in": [
+        "favorable_thoracolumbar"
+       ],
+       "cite": "favorable ankylosis of the entire thoracolumbar spine"
+      },
+      {
+       "level": 50,
+       "in": [
+        "unfavorable_thoracolumbar"
+       ],
+       "cite": "Unfavorable ankylosis of the entire thoracolumbar spine"
+      },
+      {
+       "level": 100,
+       "in": [
+        "unfavorable_entire_spine"
+       ],
+       "cite": "Unfavorable ankylosis of the entire spine"
+      }
+     ],
+     "not_met": "Records show {value}.",
+     "not_documented": "Records do not document {label}. Ask your provider to document {label} as it is now."
+    }
+   ]
+  }
+ }
+}

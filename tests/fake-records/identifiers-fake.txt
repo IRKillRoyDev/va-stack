@@ -1,0 +1,11 @@
+=== PAGE 1 ===
+FICTIONAL TEST RECORD - Synthetic identifiers for redaction tests only
+Patient: Pat Example (fictional)  SSN 000-12-3456  DOB: 01/02/1980
+VA file number: C 12345678  DoD ID: 1234567890
+Phone (555) 010-0199  Email pat.example@example.invalid
+Address: 123 Example Street, Apt 4
+=== PAGE 2 ===
+Hearing: tinnitus reported, see SSN 000123456 and phone 555-010-0123.
+Hearing: tinnitus follow-up 1.
+Hearing: tinnitus follow-up 2.
+Hearing: tinnitus follow-up 3.

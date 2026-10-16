@@ -1,0 +1,14 @@
+{
+  "as_of": "2026-10-14",
+  "claims": [
+    {"condition": "No CFR cite", "basis": "Direct", "cfr": [], "dc": "5237",
+     "evidence": [{"file": "va-clinic-fake.txt", "page": 1, "quote": "lumbosacral strain"}], "gaps": []},
+    {"condition": "No record cite", "basis": "Direct", "cfr": ["38 CFR §3.303"], "dc": "6260", "evidence": [], "gaps": []},
+    {"condition": "Fabricated quote", "basis": "Direct", "cfr": ["38 CFR §3.303"], "dc": "6260",
+     "evidence": [{"file": "va-clinic-fake.txt", "page": 3, "quote": "this text is not in the record"}], "gaps": []}
+  ],
+  "related": [
+    {"condition": "Labeled as claim", "linked_to": "x", "link_source": {"cfr": "38 CFR §3.310"},
+     "documentation_needed": ["nexus letter"], "status": "claimable"}
+  ]
+}

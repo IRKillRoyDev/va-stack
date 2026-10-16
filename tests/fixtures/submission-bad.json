@@ -1,0 +1,18 @@
+{
+ "track": "bad",
+ "as_of": "",
+ "steps": [
+  {
+   "step": 1,
+   "action": "submit the claim to VA",
+   "cites": []
+  },
+  {
+   "step": 2,
+   "action": "sign form",
+   "cites": [
+    "https://example.com"
+   ]
+  }
+ ]
+}
