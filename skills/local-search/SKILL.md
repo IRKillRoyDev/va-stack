@@ -26,7 +26,7 @@ The bot's AI service processes any text the bot reads. This skill keeps that to 
 
 - No approval of the snippet list → stop; read nothing.
 - Never read a whole file or page without explicit approval for that page.
-- Redaction is pattern-based and can miss things, and names are never redacted. Ask the user to check every snippet before approving it.
+- Redaction is pattern-based and can miss things, and names are never redacted. It can also over-redact (for example a number after a capitalized word and a state code). A bare year such as "born in 1961" is not redacted. Labeled dates of birth (DOB, D.O.B., born on, date of birth) are redacted in every mode, including `--keep-dates` and file names. Ask the user to check every snippet before approving it.
 - Never run the script on a folder inside a git repository or a public sync folder.
 
 ## Output template
