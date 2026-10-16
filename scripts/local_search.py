@@ -139,6 +139,18 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
             re.MULTILINE,
         ),
     ),
+    (
+        # Labeled names only: "Name:", "Patient:", "Veteran:", or a title
+        # (Mr., Mrs., Ms., Dr.) followed by one or two capitalized words.
+        # Names without a label are NOT redacted. Runs after ADDRESS so a
+        # street suffix "Dr." is handled there first.
+        "NAME",
+        re.compile(
+            r"(?P<lbl>\b(?:(?i:name|patient|veteran)[ \t]*:[ \t]*"
+            r"|(?:Mr|Mrs|Ms|Dr)\.?[ \t]+))"
+            r"[A-Z][a-z'\u2019-]+(?:[ \t]+[A-Z][a-z'\u2019-]+)?"
+        ),
+    ),
 ]
 
 
@@ -291,6 +303,28 @@ def _tag(kind: str):
         return label + f"[REDACTED-{kind}]" + "\n" * value.count("\n")
 
     return replace
+
+
+def strip_invisible(text: str) -> str:
+    """Map look-alike separators and drop invisible and combining characters.
+
+    When to use: before comparing a quote with record text; no redaction.
+    """
+    text = text.translate(INVISIBLE)
+    return "".join(
+        ch for ch in text if unicodedata.category(ch) not in STRIP_CATEGORIES
+    )
+
+
+def contains_quote(page: str, quote: str) -> bool:
+    """True when quote is in page, comparing unredacted text exactly.
+
+    When to use: to prove a quote is in the record before redaction, so a
+    quote with a different identifier or date is refused. Only whitespace,
+    invisible and combining characters are normalized; case is kept.
+    """
+    q = " ".join(strip_invisible(quote).split())
+    return bool(q) and q in " ".join(strip_invisible(page).split())
 
 
 def redact(text: str, keep_dates: bool = False) -> tuple[str, dict[str, int]]:

@@ -26,6 +26,7 @@ import importlib.util
 import json
 import re
 import sys
+import unicodedata
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from urllib.parse import urlparse
@@ -41,6 +42,7 @@ records_vault = importlib.util.module_from_spec(_SPEC)
 sys.modules.setdefault("records_vault", records_vault)
 _SPEC.loader.exec_module(records_vault)
 redact = records_vault.local_search.redact
+_ls = records_vault.local_search
 
 INSUFFICIENT = "insufficient evidence to estimate"
 ESTIMATE_NOTICE = (
@@ -413,26 +415,41 @@ def gap_analysis(dc_code: str, dc: dict, findings: dict, level) -> dict:
     return {"at_max": False, "next_level": nxt, "factors": factors, "text": summary}
 
 
-def _form_rows(form_name: str | None, issues: list[dict]) -> dict:
+def _form_rows(
+    form_name: str | None, issues: list[dict], cites: list[dict] | None = None
+) -> dict:
     """Lay issues out column-for-column like the verified form.
 
-    When to use: inside build_report().
+    When to use: inside build_report(). `cites` holds each issue's label and
+    flags from the cited report. The nexus (explanation) column never asserts
+    a link: it holds LABEL plus any flags, for the user to read and fill in.
+    Every form section carries the label, the flags, and NO_FLAG_NOTE.
     """
+    cites = cites or [{"label": LABEL, "flags": []} for _ in issues]
+    row_notes = [
+        {"label": c["label"], "flags": list(c["flags"]), "note": NO_FLAG_NOTE}
+        for c in cites
+    ]
+    all_flags = list(dict.fromkeys(f for c in cites for f in c["flags"]))
     if form_name is None:
-        return {"form": None, "rows": [], "note": "no verified form for this track"}
+        return {
+            "form": None,
+            "rows": [],
+            "note": "no verified form for this track",
+            "label": LABEL,
+            "flags": all_flags,
+            "row_notes": row_notes,
+        }
     form = load_forms()["forms"][form_name]
     labels = {c["issue_field"]: c["label"] for c in form["columns"]}
     rows = []
-    for issue in issues:
+    for issue, cite in zip(issues, cites):
         _check_date(issue.get("approx_date", ""))
         _check_decision_date(issue.get("decision_date", ""))
         values = {
             "condition": issue["condition"],
             "in_service_event": issue.get("in_service_event", ""),
-            "explanation": (
-                f"{issue['basis'].capitalize()} basis: {issue['condition']} relates "
-                f"to {issue.get('in_service_event', 'the in-service event')}."
-            ),
+            "explanation": " ".join([cite["label"], *cite["flags"]]),
             "approx_date": issue.get("approx_date", ""),
             "specific_issue": f"Service connection for {issue['condition']}",
             "decision_date": issue.get("decision_date", ""),
@@ -447,6 +464,9 @@ def _form_rows(form_name: str | None, issues: list[dict]) -> dict:
         "vagov_url": form["vagov_url"],
         "pdf_url": form["pdf_url"],
         "rows": rows,
+        "label": LABEL,
+        "flags": all_flags,
+        "row_notes": row_notes,
     }
 
 
@@ -496,8 +516,10 @@ FLAG_WIDENED = (
     "Quote was widened to the whole sentence(s) it sits in; read the context."
 )
 FLAG_BOUNDARY = (
-    "Sentence boundary next to the quote may be an abbreviation; read the context."
+    "Sentence boundary next to the quote may be an abbreviation, or a negation"
+    " or hedge sits just outside the context; read the context."
 )
+NO_FLAG_NOTE = "No flag does not mean the opinion is positive."
 CONTEXT_SENTENCES = 2
 _ABBREV_LIKE = re.compile(r"(?:[A-Za-z]\.){2,}|[A-Za-z]{1,4}\.")
 
@@ -517,10 +539,21 @@ def cite_quote(vault, ev: dict, bot_id: str) -> dict:
     - "label": always LABEL. Nothing is ever labeled as backing a claim.
     The page is read through the vault, so the open is logged.
     """
-    quote = " ".join(redact(ev.get("quote") or "")[0].split())
+    raw_quote = ev.get("quote") or ""
+    quote = " ".join(redact(raw_quote)[0].split())
     if not quote:
         raise ValueError("empty quote")
-    raw = vault.open_link(vault.link_for(ev["file"], ev["page"]), bot_id=bot_id)
+    link = vault.link_for(ev["file"], ev["page"])
+    raw = vault.open_link(link, bot_id=bot_id)
+    # Prove the quote is in the record before redaction, so a quote with a
+    # different SSN, date, or letter case is refused. A real vault checks
+    # inside the vault (yes/no only); a plain page source is checked here.
+    check = getattr(vault, "quote_in_record", None)
+    found = (
+        check(link, raw_quote, bot_id) if check else _ls.contains_quote(raw, raw_quote)
+    )
+    if not found:
+        raise ValueError(f"quote not found on cited page {ev['page']}")
     page = redact(raw)[0]
     lines = {" ".join(ln.split()) for ln in page.splitlines()}
     if len(quote) < MIN_QUOTE and quote not in lines:
@@ -536,26 +569,70 @@ def cite_quote(vault, ev: dict, bot_id: str) -> dict:
         offset += len(unit) + 1
     first = max(k for k, st in enumerate(starts) if st <= pos)
     last = max(k for k, st in enumerate(starts) if st < pos + len(quote))
-    cited = " ".join(units[slice(first, last + 1)])
-    before = units[slice(max(0, first - CONTEXT_SENTENCES), first)]
-    after = units[slice(last + 1, last + 1 + CONTEXT_SENTENCES)]
-    text = " ".join([*before, "[QUOTE]" + cited + "[/QUOTE]", *after])
+    lo = max(0, first - CONTEXT_SENTENCES)
+    hi = last + 1 + CONTEXT_SENTENCES
+    window = units[slice(lo, hi)]
     flags = []
-    if NEGATION.search(" ".join([*before, cited, *after])):
+    if NEGATION.search(fold_for_negation(" ".join(window))):
         flags.append(FLAG_NEGATIVE)
-    if cited != quote:
+    if " ".join(units[slice(first, last + 1)]) != quote:
         flags.append(FLAG_WIDENED)
     edges = [units[first - 1]] if first else []
     edges.append(units[last])
-    if any(_ABBREV_LIKE.fullmatch(u.split()[-1]) for u in edges if u.split()):
+    beyond = _beyond(units[slice(0, lo)][::-1]) + _beyond(units[slice(hi, None)])
+    if any(
+        _ABBREV_LIKE.fullmatch(u.split()[-1]) for u in edges if u.split()
+    ) or NEGATION.search(fold_for_negation(" ".join(beyond))):
         flags.append(FLAG_BOUNDARY)
+    before = units[slice(lo, first)]
+    cited = " ".join(units[slice(first, last + 1)])
+    after = units[slice(last + 1, hi)]
+    text = " ".join([*before, "[QUOTE]" + cited + "[/QUOTE]", *after])
     return {
         "quote": cited,
         "your_quote": quote,
         "context": {"before": before, "quote": cited, "after": after, "text": text},
         "flags": flags,
         "label": LABEL,
+        "note": NO_FLAG_NOTE,
     }
+
+
+def _beyond(units: list[str]) -> list[str]:
+    """Units just past the window: up to the first real (3+ word) sentence.
+
+    When to use: inside cite_quote(), so a fragment such as "4." does not
+    hide the sentence after it. At most three units.
+    """
+    out = []
+    for unit in units[slice(0, 3)]:
+        out.append(unit)
+        if len(unit.split()) >= 3:
+            break
+    return out
+
+
+# Latin look-alikes (Cyrillic and Greek) folded before the NEGATION check.
+CONFUSABLES = str.maketrans(
+    "\u0430\u0435\u043e\u0440\u0441\u0443\u0445\u0456\u0455\u0458\u043a"
+    "\u043c\u043d\u0442\u0432\u0410\u0415\u041e\u0420\u0421\u0423\u0425"
+    "\u0406\u0405\u0408\u041a\u041c\u041d\u0422\u0412"
+    "\u03bf\u03b1\u03b5\u03b9\u03ba\u03bd\u03c1\u03c4\u03c5\u03c7"
+    "\u039f\u0391\u0395\u0399\u039a\u039d\u03a1\u03a4\u03a5\u03a7"
+    "\u0392\u0397\u039c\u0396",
+    "aeopcyxisjkmhtbAEOPCYXISJKMHTB" "oaeiknptux" "OAEIKNPTYX" "BHMZ",
+)
+APOSTROPHES = str.maketrans(dict.fromkeys("\u2018\u2019\u02bc\u2032\uff07", "'"))
+
+
+def fold_for_negation(text: str) -> str:
+    """NFKC, then fold Latin look-alikes and curly apostrophes.
+
+    When to use: on every context window before NEGATION.search(), so
+    "doesn\u2019t", a Cyrillic "o" in "not", or fullwidth "NOT" still match.
+    """
+    text = unicodedata.normalize("NFKC", _ls.strip_invisible(text))
+    return text.translate(CONFUSABLES).translate(APOSTROPHES)
 
 
 # Abbreviations whose period does not end a sentence (lowercase compare).
@@ -569,15 +646,16 @@ _SENT_END = re.compile(r"[.!?]+[)\]\"']*(?=\s)")
 def split_sentences(text: str) -> list[str]:
     """Split text into whitespace-normalized sentences.
 
-    When to use: inside _check_quote(). A line break always ends a piece; a
-    period, "!" or "?" ends one only when followed by whitespace and the
-    word it ends is not an abbreviation (e.g., i.e., Dr., Mr., Mrs., Ms.,
-    vs., etc., approx., No., ...) or a single initial. Decimals such as 3.5
-    are never split because no whitespace follows the period.
+    When to use: inside cite_quote(). Soft line wraps are joined first: a
+    line break ends a sentence only after ".", "!" or "?" or when a blank
+    line follows. A period, "!" or "?" ends one only when followed by
+    whitespace and the word it ends is not an abbreviation (e.g., i.e., Dr.,
+    Mr., Mrs., Ms., vs., etc., approx., No., ...) or a single initial.
+    Decimals such as 3.5 are never split because no whitespace follows.
     """
     out = []
-    for line in text.splitlines():
-        line = " ".join(line.split())
+    for para in re.split(r"\n[ \t]*\n", text):
+        line = " ".join(para.split())
         pos = 0
         for m in _SENT_END.finditer(line):
             word = line[slice(pos, m.end())].split()[-1].lower().strip("()[]\"'")
@@ -599,7 +677,13 @@ NEGATION = re.compile(
     # hedges and qualifiers
     r"|unable|fails to|insufficient|inconsistent|doubtful|less than 50 percent"
     # explicit disagreement (needed for the red-team "rejects"/"disagrees" cases)
-    r"|rejects?|disagrees?|disputes?|refutes?|contradicts?)\b|n't\b",
+    r"|rejects?|disagrees?|disputes?|refutes?|contradicts?"
+    # round 10 additions
+    r"|deny|none|neither|nor|absen(?:ce|t)|lacks?|lacking|speculat\w*|excluded"
+    r"|improbable|contrary|unsupported|rather than|outweigh(?:s|ed)?)\b|n't\b"
+    # any "less than ... 50" or "50 ... or less", in digits or words
+    r"|\bless than(?:\s+\w+){0,2}\s+(?:50|fifty)\b"
+    r"|\b(?:50|fifty)\s*(?:%|percent|per cent)?(?:\s+\w+){0,2}\s+or less\b",
     re.IGNORECASE,
 )
 
@@ -637,6 +721,7 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                     "context": cite["context"],
                     "flags": cite["flags"],
                     "label": cite["label"],
+                    "note": cite["note"],
                 }
             )
         row_flags = list(dict.fromkeys(f for ln in links for f in ln["flags"]))
@@ -652,6 +737,7 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                 "links": links,
                 "label": LABEL,
                 "flags": row_flags,
+                "note": NO_FLAG_NOTE,
                 "estimate": level,
                 "rating_wording": {
                     "section": dc["section"] if dc else None,
@@ -692,7 +778,11 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
     form_name = load_forms()["tracks"].get(data.get("track"))
     return {
         "cited_report": rows,
-        "form": _form_rows(form_name, data["issues"]),
+        "form": _form_rows(
+            form_name,
+            data["issues"],
+            [{"label": r["label"], "flags": r["flags"]} for r in rows],
+        ),
         "combined": combined,
     }
 

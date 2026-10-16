@@ -576,6 +576,40 @@ class Vault:
         )
         return text
 
+    def quote_in_record(self, link: str, quote: str, bot_id: str) -> bool:
+        """Say whether quote appears in the record page before redaction.
+
+        When to use: by proposed_issues.cite_quote(), so a quote whose SSN,
+        date, or letters differ from the record is refused even when both
+        would redact to the same text. Only a yes/no leaves the vault; the
+        unredacted page is never returned. The check is logged with a keyed
+        HMAC of the quote, never the text.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        m = LINK_RE.fullmatch(link or "")
+        if m is None:
+            raise VaultError("not a vault link")
+        row = self._conn.execute(
+            "SELECT r.text FROM files f JOIN records r ON r.file = f.file"
+            " WHERE f.record_id = ? AND r.page = ?",
+            (m.group("rid"), int(m.group("page"))),
+        ).fetchone()
+        if row is None:
+            raise VaultError("no such record page")
+        found = local_search.contains_quote(row[0], quote)
+        self._log(
+            bot_id,
+            "quote_checked",
+            {
+                "record_id": m.group("rid"),
+                "page": int(m.group("page")),
+                "hmac": self._mac(quote),
+                "found": found,
+            },
+        )
+        return found
+
     def link_for(self, file: str, page: int) -> str:
         """Return a vault link (vault://<record_id>#page=N) with no file path.
 
