@@ -70,11 +70,26 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
       - name: Install pinned dependencies
         run: pip install -r requirements-dev.txt
-      - name: Drive the Unlock and Review windows under Xvfb
+      - name: va-stack entry point installs
+        run: |
+          python -m pip install -e .
+          va-stack --help
+      - name: Drive the app and review windows under Xvfb (with screenshots)
+        env:
+          VA_STACK_SHOTS: ${{ github.workspace }}/va-stack-shots
         run: |
           python -c "import tkinter; print('tk', tkinter.TkVersion)"
-          xvfb-run -a pytest -v -rs tests/test_gui_headless.py | tee gui.txt
-          grep -q "2 passed" gui.txt
+          set -o pipefail
+          xvfb-run -a pytest -v -rs tests/test_gui_headless.py tests/test_app_gui.py | tee gui.txt
+          grep -q "3 passed" gui.txt
+          ls -l "$VA_STACK_SHOTS"
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: va-stack-shots
+          path: va-stack-shots/
+          if-no-files-found: error
   macos:
     runs-on: macos-latest
     steps:
