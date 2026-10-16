@@ -1,0 +1,53 @@
+{
+ "track": "track-b2-already-filed",
+ "as_of": "2026-10-16",
+ "steps": [
+  {
+   "step": 1,
+   "action": "validate sources",
+   "cites": [
+    "https://www.va.gov/disability/how-to-file-claim/",
+    "https://www.va.gov/find-forms/about-form-21-526ez/",
+    "https://www.va.gov/decision-reviews/",
+    "https://www.va.gov/decision-reviews/supplemental-claim/",
+    "https://www.va.gov/decision-reviews/higher-level-review/",
+    "https://www.va.gov/decision-reviews/board-appeal/",
+    "https://www.va.gov/find-forms/about-form-20-0995/",
+    "https://www.va.gov/find-forms/about-form-20-0996/",
+    "https://www.va.gov/find-forms/about-form-10182/",
+    "38 CFR \u00a73.2500",
+    "38 CFR \u00a73.2501",
+    "38 CFR \u00a73.2601"
+   ]
+  },
+  {
+   "step": 2,
+   "action": "pick lane: increase, new condition, supplemental, HLR, Board",
+   "cites": [
+    "https://www.va.gov/decision-reviews/",
+    "38 CFR \u00a73.2500"
+   ]
+  },
+  {
+   "step": 3,
+   "action": "gather evidence; identify new and relevant evidence",
+   "cites": [
+    "38 CFR \u00a73.2501"
+   ]
+  },
+  {
+   "step": 4,
+   "action": "explain online or form path for the lane",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  },
+  {
+   "step": 5,
+   "action": "hand-off checklist and accredited review",
+   "cites": [
+    "https://www.va.gov/decision-reviews/"
+   ]
+  }
+ ]
+}
