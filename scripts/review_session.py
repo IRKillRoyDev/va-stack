@@ -33,6 +33,7 @@ pi = _load("proposed_issues")
 redact = pi.redact
 
 QUESTION = "Does this match what your record means?"
+NAMES_CHECK = "Check for names we didn't hide."
 KEYS = {
     "Return": "Yes",
     "KP_Enter": "Yes",
@@ -101,17 +102,9 @@ class ReviewSession:
         """Take what the user typed after No; redact it and warn on PII."""
         if self.screen != "type":
             raise ValueError("not on the type-the-rest screen")
-        clean, counts = redact(text or "")
-        clean = clean.strip()
+        clean, _counts, warning = pi.records_vault.clean_correction(text)
         row_id = self.rows[self.index]["row_id"]
         self.answers[row_id] = {"answer": "no", "text": clean}
-        warning = None
-        if counts:
-            warning = (
-                "We found and hid personal details in what you typed ("
-                + ", ".join(sorted(counts))
-                + "). Please check it."
-            )
         self._advance()
         return {"text": clean, "warning": warning}
 
@@ -152,6 +145,7 @@ class ReviewSession:
         if self.screen in ("summary", "done"):
             out = {"screen": self.screen, **self.summary()}
             out["buttons"] = ["Confirm all", "Back"] if self.screen == "summary" else []
+            out["names_check"] = NAMES_CHECK
             return out
         row = self.rows[self.index]
         first = row["pointers"][0]
@@ -170,6 +164,7 @@ class ReviewSession:
             "flags": list(row["flags"]),
             "note": row["note"],
             "question": QUESTION,
+            "names_check": NAMES_CHECK,
             "buttons": ["Yes", "No", "Back", "Next"],
         }
         if self.screen == "type":
@@ -184,7 +179,8 @@ class ReviewSession:
         items = [
             {"row_id": r["row_id"], **self.answers[r["row_id"]]} for r in self.rows
         ]
-        out = vault.save_reviews(items, bot_id=bot_id)
+        token = vault._issue_confirm_token(bot_id)
+        out = vault.save_reviews(items, bot_id=bot_id, confirm_token=token)
         self.screen = "done"
         return out
 
@@ -207,6 +203,7 @@ def run_cli(report: dict, vault, bot_id: str, input_fn=input, say=print) -> int:
             for flag in v["flags"]:
                 say(f"Check: {flag}")
             say(v["note"])
+            say(v["names_check"])
             say(v["question"] + "  Yes [Enter]  No [n]  Back [b]  Next [x]")
             cmd = input_fn("> ").strip().lower()
             s.press(
@@ -216,6 +213,7 @@ def run_cli(report: dict, vault, bot_id: str, input_fn=input, say=print) -> int:
             )
         elif v["screen"] == "type":
             say(v["prompt"])
+            say(v["names_check"])
             out = s.type_text(input_fn("Your text: "))
             if out["warning"]:
                 say(out["warning"])
@@ -224,6 +222,7 @@ def run_cli(report: dict, vault, bot_id: str, input_fn=input, say=print) -> int:
             for r in v["rows"]:
                 n = r["edit"] + 1
                 say(f"  {n}. {r['condition']}: {r['status']}  (e {n})")
+            say(v["names_check"])
             say("Confirm all [c]  Back [b]  Edit a row [e N]")
             cmd = input_fn("> ").strip().lower()
             if cmd == "c":

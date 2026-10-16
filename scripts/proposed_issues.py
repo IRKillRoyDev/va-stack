@@ -545,6 +545,9 @@ CONTEXT_SENTENCES = 2
 _ABBREV_LIKE = re.compile(r"(?:[A-Za-z]\.){2,}|[A-Za-z]{1,4}\.")
 
 
+NOT_FOUND = "quote not found in the record"
+
+
 def cite_quote(vault, ev: dict, bot_id: str) -> dict:
     """Cite a quote with its record context; never judge what it means.
 
@@ -564,17 +567,17 @@ def cite_quote(vault, ev: dict, bot_id: str) -> dict:
     quote = " ".join(redact(raw_quote)[0].split())
     if not quote:
         raise ValueError("empty quote")
-    link = vault.link_for(ev["file"], ev["page"])
-    raw = vault.open_link(link, bot_id=bot_id)
-    # Prove the quote is in the record before redaction, so a quote with a
-    # different SSN, date, or letter case is refused. A real vault checks
-    # inside the vault (yes/no only); a plain page source is checked here.
-    check = getattr(vault, "quote_in_record", None)
-    found = (
-        check(link, raw_quote, bot_id) if check else _ls.contains_quote(raw, raw_quote)
-    )
-    if not found:
-        raise ValueError(f"quote not found on cited page {ev['page']}")
+    try:
+        link = vault.link_for(ev["file"], ev["page"])
+        raw = vault.open_link(link, bot_id=bot_id)
+    except Exception as exc:
+        # Same error for every miss (bad link, unknown file, missing page).
+        # Matched by class name so a reloaded records_vault module still
+        # counts; a locked vault is still reported as locked.
+        names = {c.__name__ for c in type(exc).__mro__}
+        if "VaultError" not in names or "VaultLocked" in names:
+            raise
+        raise ValueError(NOT_FOUND) from None
     page = redact(raw)[0]
     lines = {" ".join(ln.split()) for ln in page.splitlines()}
     if len(quote) < MIN_QUOTE and quote not in lines:
@@ -583,7 +586,7 @@ def cite_quote(vault, ev: dict, bot_id: str) -> dict:
     flat = " ".join(units)
     pos = flat.find(quote)
     if pos == -1:
-        raise ValueError(f"quote not found on cited page {ev['page']}")
+        raise ValueError(NOT_FOUND)
     starts, offset = [], 0
     for unit in units:
         starts.append(offset)
@@ -607,6 +610,17 @@ def cite_quote(vault, ev: dict, bot_id: str) -> dict:
         flags.append(FLAG_BOUNDARY)
     before = units[slice(lo, first)]
     cited = " ".join(units[slice(first, last + 1)])
+    # Prove the quote is in the record before redaction (a different SSN,
+    # date or letter case is refused). A real vault checks inside the vault
+    # on the whole cited sentence(s), capped per session; a plain page
+    # source (tests) is checked here.
+    check = getattr(vault, "_verify_citation", None)
+    if check is not None:
+        found = check(link, raw_quote, cited, bot_id=bot_id)
+    else:
+        found = _ls.contains_quote(raw, raw_quote)
+    if not found:
+        raise ValueError(NOT_FOUND)
     after = units[slice(last + 1, hi)]
     text = " ".join([*before, "[QUOTE]" + cited + "[/QUOTE]", *after])
     return {
@@ -634,17 +648,23 @@ def _line_of(page: str, cited: str) -> int:
 
 
 def _beyond(units: list[str]) -> list[str]:
-    """Units just past the window: up to the first real (3+ word) sentence.
+    """The whole next sentence past the window.
 
-    When to use: inside cite_quote(), so a fragment such as "4." does not
-    hide the sentence after it. At most three units.
+    When to use: inside cite_quote(). Keeps taking units while the text so
+    last unit is under 3 words or ends in an abbreviation-like word
+    ("Ref.", "4."), so a false split cannot hide the rest of the sentence.
+    At most six units.
     """
     out = []
-    for unit in units[slice(0, 3)]:
+    for unit in units[slice(0, 6)]:
         out.append(unit)
-        if len(unit.split()) >= 3:
+        words = unit.split()
+        if len(words) >= 3 and not _SHORT_END.fullmatch(words[-1]):
             break
     return out
+
+
+_SHORT_END = re.compile(r"(?:[A-Za-z]\.){2,}|[A-Za-z0-9]{1,4}\.")
 
 
 # Latin look-alikes (Cyrillic and Greek) folded before the NEGATION check.
@@ -657,7 +677,7 @@ CONFUSABLES = str.maketrans(
     "\u0392\u0397\u039c\u0396",
     "aeopcyxisjkmhtbAEOPCYXISJKMHTB" "oaeiknptux" "OAEIKNPTYX" "BHMZ",
 )
-APOSTROPHES = str.maketrans(dict.fromkeys("\u2018\u2019\u02bc\u2032\uff07", "'"))
+APOSTROPHES = str.maketrans(dict.fromkeys("\u2018\u2019\u02bc\u2032\uff07`\u00b4", "'"))
 
 
 def fold_for_negation(text: str) -> str:
@@ -666,44 +686,14 @@ def fold_for_negation(text: str) -> str:
     When to use: on every context window before NEGATION.search(), so
     "doesn\u2019t", a Cyrillic "o" in "not", or fullwidth "NOT" still match.
     """
-    text = unicodedata.normalize("NFKC", _ls.strip_invisible(text))
+    text = _ls.strip_invisible(text).translate(APOSTROPHES)  # before NFKC
+    text = unicodedata.normalize("NFKC", text)
     return text.translate(CONFUSABLES).translate(APOSTROPHES)
 
 
-# Abbreviations whose period does not end a sentence (lowercase compare).
-ABBREVIATIONS = frozenset(
-    "e.g. i.e. dr. mr. mrs. ms. vs. etc. approx. no. st. jr. sr. pt. fig."
-    " al. cf. ca. dept. min. max. mt.".split()
-)
-_SENT_END = re.compile(r"[.!?]+[)\]\"']*(?=\s)")
-
-
-def split_sentences(text: str) -> list[str]:
-    """Split text into whitespace-normalized sentences.
-
-    When to use: inside cite_quote(). Soft line wraps are joined first: a
-    line break ends a sentence only after ".", "!" or "?" or when a blank
-    line follows. A period, "!" or "?" ends one only when followed by
-    whitespace and the word it ends is not an abbreviation (e.g., i.e., Dr.,
-    Mr., Mrs., Ms., vs., etc., approx., No., ...) or a single initial.
-    Decimals such as 3.5 are never split because no whitespace follows.
-    """
-    out = []
-    for para in re.split(r"\n[ \t]*\n", text):
-        line = " ".join(para.split())
-        pos = 0
-        for m in _SENT_END.finditer(line):
-            word = line[slice(pos, m.end())].split()[-1].lower().strip("()[]\"'")
-            if word in ABBREVIATIONS or re.fullmatch(r"[a-z]\.", word):
-                continue
-            piece = line[slice(pos, m.end())].strip()
-            if piece:
-                out.append(piece)
-            pos = m.end()
-        rest = line[pos:].strip()
-        if rest:
-            out.append(rest)
-    return out
+# Shared with the vault's citation check (unchanged list and rules).
+ABBREVIATIONS = _ls.ABBREVIATIONS
+split_sentences = _ls.split_sentences
 
 
 NEGATION = re.compile(
@@ -715,7 +705,11 @@ NEGATION = re.compile(
     r"|rejects?|disagrees?|disputes?|refutes?|contradicts?"
     # round 10 additions
     r"|deny|none|neither|nor|absen(?:ce|t)|lacks?|lacking|speculat\w*|excluded"
-    r"|improbable|contrary|unsupported|rather than|outweigh(?:s|ed)?)\b|n't\b"
+    r"|improbable|contrary|unsupported|rather than|outweigh(?:s|ed)?"
+    # round 11 additions
+    r"|doesnt|isnt|cant|wont|less likely|refuted|negates|excludes|precludes"
+    r"|doubt|questionable|non-?service[- ]connected)\b|n't\b"
+    r"|\b(?:below|under|at most)(?:\s+\w+){0,2}\s+(?:50|fifty)\b"
     # any "less than ... 50" or "50 ... or less", in digits or words
     r"|\bless than(?:\s+\w+){0,2}\s+(?:50|fifty)\b"
     r"|\b(?:50|fifty)\s*(?:%|percent|per cent)?(?:\s+\w+){0,2}\s+or less\b",
@@ -762,12 +756,7 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                 }
             )
         tool_flags = list(dict.fromkeys(f for ln in links for f in ln["flags"]))
-        row_id = "row-%d-%s" % (
-            len(rows) + 1,
-            hashlib.sha256(f"{issue['condition']}|{issue['dc']}".encode()).hexdigest()[
-                slice(0, 12)
-            ],
-        )
+        row_id = _row_id(len(rows) + 1, issue, links)
         pointers = [
             {k: ln[k] for k in ("link", "page", "line", "date")} for ln in links
         ]
@@ -827,6 +816,9 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                 "notice": est["notice"],
             }
         )
+    register = getattr(vault, "_register_report", None)
+    if register is not None:
+        register([r["row_id"] for r in rows])
     combined = combine(numeric, data.get("bilateral_pairs") or None)
     combined.update(
         {
@@ -868,6 +860,20 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
         },
         "combined": combined,
     }
+
+
+def _row_id(n: int, issue: dict, links: list[dict]) -> str:
+    """Row id = position + hash of condition, DC, cited quotes and pointers.
+
+    When to use: inside build_report(). When the evidence changes (another
+    quote, page or line), the id changes, so an earlier Yes or No no longer
+    applies and the row goes back to unreviewed.
+    """
+    parts = [issue["condition"], issue["dc"]]
+    for ln in links:
+        parts += [ln["quote"], ln["link"], str(ln["page"]), str(ln["line"])]
+    digest = hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
+    return f"row-{n}-{digest[slice(0, 16)]}"
 
 
 def _review_state(vault, row_id: str, links: list[dict], bot_id: str):
@@ -914,7 +920,7 @@ def main(argv: list[str] | None = None) -> int:
         report = build_report(_json(args.input), vault, args.bot_id)
     finally:
         vault.close()
-    print(json.dumps(report, indent=2))
+    print(_ls.redact_names(json.dumps(report, indent=2)))
     return 0
 
 

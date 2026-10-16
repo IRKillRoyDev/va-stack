@@ -275,6 +275,40 @@ CREATE TABLE IF NOT EXISTS file_feedback (
 USER_UPDATED = "USER_UPDATED"
 REVIEW_ANSWERS = ("yes", "no")
 ROW_ID_MAX = 128
+# Citation checks allowed per unlock session; after that the check fails
+# closed (unlock again). Keeps the check from working as a guessing oracle.
+QUOTE_CHECK_LIMIT = 50
+MIN_CHECK_QUOTE = 20
+_TAG_ONLY = re.compile(r"\[REDACTED-[A-Z_]+\]|\[DATE-\d{4}\]")
+_USER_PREFIX = re.compile(r"^(?:\s*USER_UPDATED\s*:\s*)+", re.IGNORECASE)
+
+
+def clean_correction(text: str | None) -> tuple[str, dict, str | None]:
+    """Redact what the user typed after No; refuse text with nothing real.
+
+    When to use: on every typed correction (review_session and the vault).
+    Returns (clean_text, redaction_counts, warning). A typed "USER_UPDATED:"
+    prefix is removed (the flag is set by the tool, not by typing it). If
+    nothing but punctuation or redaction tags is left, clean_text is "" and
+    the warning asks for real text; the row then stays unfinal.
+    """
+    clean, counts = local_search.redact(text or "")
+    clean = _USER_PREFIX.sub("", clean.strip()).strip()
+    warning = None
+    if counts:
+        warning = (
+            "We found and hid personal details in what you typed ("
+            + ", ".join(sorted(counts))
+            + "). Please check it."
+        )
+    if not re.search(r"[A-Za-z0-9]", _TAG_ONLY.sub("", clean)):
+        if clean or (text or "").strip():
+            warning = ((warning + " ") if warning else "") + (
+                "Please type the missing words from your record; this row is"
+                " not finished yet."
+            )
+        clean = ""
+    return clean, counts, warning
 
 
 def create_vault(
@@ -419,6 +453,11 @@ class Vault:
         self._log_key = hkdf(key, b"va-stack access-log v1")
         self._snip_key = hkdf(key, b"va-stack snippet-mac v1")
         self.session_id = str(uuid.uuid4())
+        self._quote_checks = 0
+        self._confirm_tokens: set[str] = set()
+        self._in_confirm = False
+        self._report_rows: frozenset[str] = frozenset()
+        self._pending_head: tuple[int, str] | None = None
 
     @classmethod
     def open(cls, db_path: Path, password: bytearray, consent: ConsentGate) -> Vault:
@@ -496,7 +535,10 @@ class Vault:
             "INSERT INTO access_log VALUES (?,?,?,?,?,?,?,?,?)",
             (*fields.values(), prev, (mac := _entry_hash(prev, fields, self._log_key))),
         )
-        self._write_head(fields["seq"], mac)
+        if self._conn.in_transaction:
+            self._pending_head = (fields["seq"], mac)  # written after COMMIT
+        else:
+            self._write_head(fields["seq"], mac)
 
     def ingest_folder(self, folder: Path, bot_id: str) -> int:
         """Copy page text from a local folder into the encrypted vault.
@@ -586,28 +628,27 @@ class Vault:
         )
         return text
 
-    def save_review(
-        self, row_id: str, answer: str, text: str | None = None, *, bot_id: str
+    def _save_review(
+        self, row_id: str, answer: str, text: str | None, *, bot_id: str
     ) -> dict:
-        """Store the user's Yes or No for one report row, inside the vault.
+        """Write one row's Yes or No; only from inside save_reviews().
 
-        When to use: after the user reads the row's record page. Only "Yes"
-        or "No" is accepted (there is no edit path). On No the user types the
-        rest of the missing sentence or paragraph; it is run through redact()
-        anyway (the user was told to leave out PII) and a warning lists what
-        was caught. The text is saved with the USER_UPDATED flag and the time.
-        A No without text is stored but the row stays unfinal. Stays local:
-        no network; logged with a keyed HMAC of the text, never the text.
+        When to use: never directly. Only "Yes" or "No" is accepted (no edit
+        path). The row id must be in the current report. On No the typed
+        text goes through clean_correction() (redaction, warning, no fake
+        USER_UPDATED prefix, no tag-only text) and is saved with the
+        USER_UPDATED flag and the time. Logged with a keyed HMAC only.
         """
-        self._check_open()
-        bot_id = self._bot(bot_id)
+        if not self._in_confirm:
+            raise VaultError("reviews are saved only by Confirm all")
         ans = (answer or "").strip().lower()
         if ans not in REVIEW_ANSWERS:
             raise VaultError("answer must be Yes or No")
         if not isinstance(row_id, str) or not 0 < len(row_id) <= ROW_ID_MAX:
             raise VaultError("bad row id")
-        clean, counts = local_search.redact(text or "")
-        clean = clean.strip() if ans == "no" else ""
+        if row_id not in self._report_rows:
+            raise VaultError("row is not in the current report")
+        clean, counts, warning = clean_correction(text if ans == "no" else "")
         flag = USER_UPDATED if clean else None
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self._conn.execute(
@@ -627,31 +668,48 @@ class Vault:
                 "redacted": counts,
             },
         )
-        warning = None
-        if counts and ans == "no":
-            kinds = ", ".join(sorted(counts))
-            warning = (
-                f"Personal details were found and redacted in your text ({kinds})."
-                " Please check what was saved."
-            )
         return {"saved": final, "warning": warning, "redacted": counts}
 
-    def save_reviews(self, items: list[dict], bot_id: str) -> dict:
+    def _issue_confirm_token(self, bot_id: str) -> str:
+        """Give ReviewSession.confirm_all() a single-use token for one save."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        token = secrets.token_hex(16)
+        self._confirm_tokens.add(token)
+        return token
+
+    def _register_report(self, row_ids: list[str]) -> None:
+        """Remember the row ids of the report just built (build_report)."""
+        self._check_open()
+        self._report_rows = frozenset(row_ids)
+
+    def save_reviews(
+        self, items: list[dict], bot_id: str, confirm_token: str | None = None
+    ) -> dict:
         """Save a whole confirmed review at once (the Confirm all step).
 
-        When to use: by review_session.ReviewSession.confirm_all(); nothing
-        is written before that. items are {"row_id", "answer", "text"}. One
-        transaction; one review_saved entry per row, then a
-        review_confirmed_all entry. The original report is never changed.
+        When to use: only from review_session.ReviewSession.confirm_all(),
+        which passes its single-use confirm token; nothing is written
+        before that. items are {"row_id", "answer", "text"}, each row id from
+        the current report. One explicit transaction (autocommit off):
+        one review_saved entry per row, then review_confirmed_all; on any
+        error everything is rolled back, including the log head. The
+        original report is never changed. Code in the same Python process
+        can still reach these internals (see SAFETY.md).
         """
         self._check_open()
         bot_id = self._bot(bot_id)
+        if not confirm_token or confirm_token not in self._confirm_tokens:
+            raise VaultError("Confirm all is needed to save the review")
+        self._confirm_tokens.discard(confirm_token)  # single use, even on error
         results = []
-        self._conn.execute("BEGIN")
+        self._conn.execute("BEGIN IMMEDIATE")
+        self._in_confirm = True
+        self._pending_head = None
         try:
             for item in items:
                 results.append(
-                    self.save_review(
+                    self._save_review(
                         item["row_id"], item["answer"], item.get("text"), bot_id=bot_id
                     )
                 )
@@ -659,10 +717,17 @@ class Vault:
             self._conn.execute("COMMIT")
         except Exception:
             self._conn.execute("ROLLBACK")
+            self._pending_head = None
             raise
+        finally:
+            self._in_confirm = False
+        if self._pending_head is not None:
+            self._write_head(*self._pending_head)
+            self._pending_head = None
         return {
             "saved": sum(r["saved"] for r in results),
             "warnings": [r["warning"] for r in results if r["warning"]],
+            "results": results,
         }
 
     def get_review(self, row_id: str, bot_id: str) -> dict | None:
@@ -706,37 +771,52 @@ class Vault:
         self._log(bot_id, "file_feedback_read", {})
         return None if row is None else {"missing": row[0], "missed_pii": row[1]}
 
-    def quote_in_record(self, link: str, quote: str, bot_id: str) -> bool:
-        """Say whether quote appears in the record page before redaction.
+    def _verify_citation(
+        self, link: str, quote: str, expected: str, bot_id: str
+    ) -> bool:
+        """True only if quote is in the record page before redaction AND the
+        whole sentence(s) it sits in redact to `expected`.
 
-        When to use: by proposed_issues.cite_quote(), so a quote whose SSN,
-        date, or letters differ from the record is refused even when both
-        would redact to the same text. Only a yes/no leaves the vault; the
-        unredacted page is never returned. The check is logged with a keyed
-        HMAC of the quote, never the text.
+        When to use: only by proposed_issues.cite_quote(); not public API.
+        Refuses quotes under MIN_CHECK_QUOTE characters, answers False the
+        same way for a bad link, a missing page, or a miss (no page-exists
+        oracle), and fails closed after QUOTE_CHECK_LIMIT checks per unlock
+        session. The unredacted page is not returned; each check is
+        logged with a keyed HMAC of the quote.
         """
         self._check_open()
         bot_id = self._bot(bot_id)
+        if self._quote_checks >= QUOTE_CHECK_LIMIT:
+            raise VaultError("citation check limit reached; unlock again")
+        self._quote_checks += 1
+        q = " ".join(local_search.strip_invisible(quote or "").split())
+        found = False
         m = LINK_RE.fullmatch(link or "")
-        if m is None:
-            raise VaultError("not a vault link")
-        row = self._conn.execute(
-            "SELECT r.text FROM files f JOIN records r ON r.file = f.file"
-            " WHERE f.record_id = ? AND r.page = ?",
-            (m.group("rid"), int(m.group("page"))),
-        ).fetchone()
-        if row is None:
-            raise VaultError("no such record page")
-        found = local_search.contains_quote(row[0], quote)
+        row = None
+        if m is not None and len(q) >= MIN_CHECK_QUOTE:
+            row = self._conn.execute(
+                "SELECT r.text FROM files f JOIN records r ON r.file = f.file"
+                " WHERE f.record_id = ? AND r.page = ?",
+                (m.group("rid"), int(m.group("page"))),
+            ).fetchone()
+        if row is not None:
+            units = local_search.split_sentences(local_search.strip_invisible(row[0]))
+            flat = " ".join(units)
+            pos = flat.find(q)
+            if pos != -1:
+                starts, off = [], 0
+                for unit in units:
+                    starts.append(off)
+                    off += len(unit) + 1
+                first = max(k for k, st in enumerate(starts) if st <= pos)
+                last = max(k for k, st in enumerate(starts) if st < pos + len(q))
+                cited = " ".join(units[slice(first, last + 1)])
+                red = " ".join(local_search.redact(cited)[0].split())
+                found = red == " ".join((expected or "").split())
         self._log(
             bot_id,
             "quote_checked",
-            {
-                "record_id": m.group("rid"),
-                "page": int(m.group("page")),
-                "hmac": self._mac(quote),
-                "found": found,
-            },
+            {"hmac": self._mac(q), "found": found, "n": self._quote_checks},
         )
         return found
 

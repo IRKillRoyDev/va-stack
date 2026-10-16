@@ -49,6 +49,47 @@ _MBI_A = r"[AC-HJKMNP-RT-Y]"
 _MBI_AN = r"[AC-HJKMNP-RT-Y0-9]"
 _MBI_SEP = r"(?:[-\u2010-\u2015\u2212._/]| {1,2})?"
 
+# ---- labeled names -------------------------------------------------------
+# Labels are matched in any case (including ALL CAPS). After ":", "-", an
+# en/em dash, a fullwidth colon, or a line break the name may be in any
+# case; after plain whitespace it must be Title Case. A name is up to four
+# words: capitalized words (Mc/Mac/O'/hyphenated included), middle initials
+# such as "Q.", or "Last, First". Common words such as "not" or "denies"
+# are never taken as a name, so redaction cannot hide a negation.
+_NAME_LABELS = (
+    r"(?i:name|patient|veteran|claimant|pt|spouse|dependent|beneficiary"
+    r"|examiner|provider|signed(?:[ \t]+by)?)"
+)
+_NAME_STOP = (
+    r"(?!(?i:not|no|never|den\w*|none|neither|unlikely|negative|is|was|are"
+    r"|were|has|had|have|the|a|an|and|or|of|to|in|on|reports?|reported|states?"
+    r"|stated|notes?|noted|says?|said|found|finds|agrees?|disagrees?|seen"
+    r"|reviewed|ssn|dob|mbi|n/a|na|unknown|it|he|she|they|this|that|these"
+    r"|those|there|we|i|you|his|her|their|less|more|likely|at|as|be|by|for"
+    r"|with|without|from|may|might|can|could|would|should|will|confirms?"
+    r"|refused|declined|present|absent|normal|see|per)\b)"
+)
+_NAME_TOK = r"(?:[A-Z]\.|[A-Z][A-Za-z'\u2019]*(?:-[A-Z][A-Za-z'\u2019]*)*)"
+_NAME_TITLE_TOK = r"(?:[A-Z]\.|[A-Z][a-z'\u2019]+(?:-[A-Z][a-z'\u2019]+)*)"
+_NAME_LOWER = r"[a-z][a-z'\u2019-]+"
+_NAME_PUNCT = re.compile(
+    rf"(?P<lbl>\b{_NAME_LABELS}[ \t]*(?:[:\-\u2013\u2014\uff1a][ \t]*(?:\n[ \t]*)?"
+    r"|\n[ \t]*))"
+    + _NAME_STOP
+    + rf"(?:{_NAME_TOK}(?:,?[ \t]+{_NAME_STOP}{_NAME_TOK}){{0,3}}"
+    + rf"|{_NAME_LOWER}(?:[ \t]+{_NAME_STOP}{_NAME_LOWER})?)"
+)
+_NAME_SPACE = re.compile(
+    rf"(?P<lbl>\b{_NAME_LABELS}[ \t]+)"
+    + _NAME_STOP
+    + rf"{_NAME_TITLE_TOK}(?:[ \t]+{_NAME_STOP}{_NAME_TITLE_TOK}){{0,2}}"
+)
+_NAME_TITLE = re.compile(
+    r"(?P<lbl>\b(?:Mr|Mrs|Ms|Dr|MR\.|MRS\.|MS\.|DR\.)\.?[ \t]+)"
+    + _NAME_STOP
+    + rf"{_NAME_TOK}(?:[ \t]+{_NAME_STOP}{_NAME_TOK}){{0,2}}"
+)
+
 # Order matters: labeled identifiers first, then generic number shapes.
 REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
@@ -139,18 +180,12 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
             re.MULTILINE,
         ),
     ),
-    (
-        # Labeled names only: "Name:", "Patient:", "Veteran:", or a title
-        # (Mr., Mrs., Ms., Dr.) followed by one or two capitalized words.
-        # Names without a label are NOT redacted. Runs after ADDRESS so a
-        # street suffix "Dr." is handled there first.
-        "NAME",
-        re.compile(
-            r"(?P<lbl>\b(?:(?i:name|patient|veteran)[ \t]*:[ \t]*"
-            r"|(?:Mr|Mrs|Ms|Dr)\.?[ \t]+))"
-            r"[A-Z][a-z'\u2019-]+(?:[ \t]+[A-Z][a-z'\u2019-]+)?"
-        ),
-    ),
+    # Labeled names (see _NAME_* below). Names without a label are NOT
+    # redacted. These run after ADDRESS so a street suffix "Dr" is handled
+    # there first.
+    ("NAME", _NAME_PUNCT),
+    ("NAME", _NAME_SPACE),
+    ("NAME", _NAME_TITLE),
 ]
 
 
@@ -303,6 +338,55 @@ def _tag(kind: str):
         return label + f"[REDACTED-{kind}]" + "\n" * value.count("\n")
 
     return replace
+
+
+def redact_names(text: str) -> str:
+    """Apply only the labeled-name rules (for exports such as report JSON).
+
+    When to use: on text that must keep numbers and dates (hashes, as-of
+    dates) but must not carry a labeled name.
+    """
+    for kind, pattern in REDACTIONS:
+        if kind == "NAME":
+            text = pattern.sub(_tag(kind), text)
+    return text
+
+
+# Abbreviations whose period does not end a sentence (lowercase compare).
+ABBREVIATIONS = frozenset(
+    "e.g. i.e. dr. mr. mrs. ms. vs. etc. approx. no. st. jr. sr. pt. fig."
+    " al. cf. ca. dept. min. max. mt.".split()
+)
+_SENT_END = re.compile(r"[.!?]+[)\]\"']*(?=\s)")
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split text into whitespace-normalized sentences.
+
+    When to use: for quote citations (proposed_issues.cite_quote and the
+    vault's citation check share it). Soft line wraps are joined first: a
+    line break ends a sentence only after ".", "!" or "?" or when a blank
+    line follows. A period, "!" or "?" ends one only when followed by
+    whitespace and the word it ends is not an abbreviation (e.g., i.e., Dr.,
+    Mr., Mrs., Ms., vs., etc., approx., No., ...) or a single initial.
+    Decimals such as 3.5 are never split because no whitespace follows.
+    """
+    out = []
+    for para in re.split(r"\n[ \t]*\n", text):
+        line = " ".join(para.split())
+        pos = 0
+        for m in _SENT_END.finditer(line):
+            word = line[slice(pos, m.end())].split()[-1].lower().strip("()[]\"'")
+            if word in ABBREVIATIONS or re.fullmatch(r"[a-z]\.", word):
+                continue
+            piece = line[slice(pos, m.end())].strip()
+            if piece:
+                out.append(piece)
+            pos = m.end()
+        rest = line[pos:].strip()
+        if rest:
+            out.append(rest)
+    return out
 
 
 def strip_invisible(text: str) -> str:
