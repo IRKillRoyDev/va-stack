@@ -89,7 +89,9 @@ def test_partial_sentence_quotes_flagged(page):
 )
 def test_whole_sentence_quotes_accepted(page, quote):
     out = check(page, quote)
-    assert out["quote"] == quote and pi.FLAG_WIDENED not in out["flags"]
+    # Compared before redaction; shown redacted ("Dr. Fake" is a labeled name).
+    assert out["quote"] == ls.redact(quote)[0]
+    assert pi.FLAG_WIDENED not in out["flags"]
 
 
 def test_negation_backup_covers_text_after_quote():
@@ -162,6 +164,6 @@ def test_input_fixture_quotes_are_whole_sentences():
     for issue in data["issues"]:
         for ev in issue["evidence"]:
             raw = (ROOT / "tests/fake-records" / ev["file"]).read_text()
-            text = ls.redact(raw)[0]  # vault pages are redacted
+            text = ls.split_text_pages(raw)[ev["page"] - 1]  # record, unredacted
             out = check(text, ev["quote"])
             assert pi.FLAG_WIDENED not in out["flags"], ev["quote"]
