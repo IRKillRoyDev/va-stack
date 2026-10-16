@@ -79,7 +79,7 @@ Steps differ by branch of service, so check your branch's current regulation wit
 - Any source in step 1 unconfirmed → stop; no process guidance from memory.
 - Never submit, sign, upload, fax, mail, call, or message VA; never fill in a signature; never create a VA.gov account action for the user.
 - Never state a form number, revision date, deadline, or effective-date rule unless quoted from a source fetched in this session.
-- No outcome or rating predictions.
+- No outcome predictions. Unofficial rating estimates come only from proposed-issues, each with this notice: Unofficial estimate, not a VA decision. It is likely to differ after the VA exam (C&P exam). Confirm with a VA-accredited representative.
 
 ## Output template (all tracks)
 

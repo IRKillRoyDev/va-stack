@@ -19,14 +19,14 @@ Run [local-search](../local-search/SKILL.md) first for any extra evidence terms 
    - **Secondary** (§3.310): current diagnosis + a service-connected (or claimed) primary condition + evidence the primary caused or aggravated it.
    - **Aggravation** (§3.306): condition noted at entry + increase in severity during service.
 4. For each basis, fill three elements with `shown` (with file p.# "quote") or `missing`: current diagnosis, in-service event (or presumptive qualifier / primary condition), nexus (or presumption).
-5. Quote the rating schedule criteria for the DC verbatim. Do **not** say which percentage the veteran would get.
+5. Quote the rating schedule criteria for the DC verbatim. Any estimate is made only by [proposed-issues](../proposed-issues/SKILL.md), from structured factors, with this notice: Unofficial estimate, not a VA decision. It is likely to differ after the VA exam (C&P exam). Confirm with a VA-accredited representative.
 
 ## Stop rules
 
 - No cfr-fetch for this session → stop and run cfr-fetch.
 - Never assign a DC or basis without quoting the fetched CFR text that supports it.
 - Never mark an element `shown` without a record cite. If unsure, it is `missing`.
-- No percentage predictions, no "likely to be granted" statements.
+- No "likely to be granted" statements. Percentage estimates come only from proposed-issues and carry its notice.
 
 ## Output template
 
@@ -35,5 +35,5 @@ As of: <eCFR date>
 | Diagnosis | DC (section) | Basis | Current dx | In-service / qualifier | Nexus | CFR quote |
 |-----------|--------------|-------|------------|------------------------|-------|-----------|
 | <dx> | DC 5237 (§4.71a) | Direct §3.303 | shown: file p.# "..." | shown/missing | shown/missing | "..." |
-Schedule criteria (quoted, no prediction): <quote>
+Schedule criteria (quoted): <quote>
 ```

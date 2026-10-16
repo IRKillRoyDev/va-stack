@@ -18,7 +18,7 @@ description: For each claimable condition from condition-map, build a table of c
 ## Stop rules
 
 - Never invent a cite or a quote. Never cite CFR from memory.
-- Do not label anything "approved", "granted", or with a percentage.
+- Do not label anything "approved" or "granted". Unofficial percentage estimates appear only in the proposed-issues output, each with this notice: Unofficial estimate, not a VA decision. It is likely to differ after the VA exam (C&P exam). Confirm with a VA-accredited representative.
 - Related/secondary conditions without a current diagnosis go to related-gaps, not here.
 
 ## Output template
