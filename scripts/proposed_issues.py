@@ -59,7 +59,7 @@ STATUSES = ("met", "not met", "not documented")
 
 
 def _json(path: Path) -> dict:
-    return json.loads(Path(path).read_text())
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 # SHA-256 of the reviewed data files. Changing either file means reviewing

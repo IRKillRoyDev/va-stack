@@ -237,12 +237,32 @@ class UnlockFlow:
         return Vault.open(self.db_path, password, gate)
 
 
+def _require_cipher(conn) -> str:
+    """Refuse to run unless the driver really is SQLCipher.
+
+    When to use: on every new connection, before the key is set. A driver
+    built without SQLCipher answers PRAGMA cipher_version with nothing, and
+    the vault would be written in plain text, so this raises instead. There
+    is no fallback to the plain sqlite3 module.
+    """
+    row = conn.execute("PRAGMA cipher_version").fetchone()
+    version = (row[0] if row else "") or ""
+    if not str(version).strip():
+        conn.close()
+        raise VaultError(
+            "this SQLite driver has no encryption (PRAGMA cipher_version is"
+            " empty); install the sqlcipher3 package from requirements.txt"
+        )
+    return str(version)
+
+
 def _connect(db_path: Path, key: bytearray):
     """Open SQLCipher with a raw key and check it decrypts.
 
     When to use: inside create_vault() and Vault.open() only.
     """
     conn = sqlcipher3.connect(str(db_path), isolation_level=None)
+    _require_cipher(conn)
     # Limit (SAFETY.md): this builds an immutable hex copy of the key that
     # cannot be zeroized; sqlcipher3 only takes the key as SQL text.
     conn.execute(f"PRAGMA key = \"x'{key.hex()}'\"")
@@ -345,7 +365,9 @@ def create_vault(
         header["mac"] = _header_mac(key, header)
     finally:
         zeroize(key)
-    header_path(db_path).write_text(json.dumps(header, indent=2) + "\n")
+    header_path(db_path).write_text(
+        json.dumps(header, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def hkdf(key: bytearray, info: bytes, length: int = 32) -> bytearray:
@@ -470,7 +492,7 @@ class Vault:
             if type(consent) is not ConsentGate:
                 raise ConsentRequired("consent to share is required for each unlock")
             consent.consume()
-            header = json.loads(header_path(db_path).read_text())
+            header = json.loads(header_path(db_path).read_text(encoding="utf-8"))
             _check_kdf_floor(header)
             key = derive_key(password, header)
         finally:
@@ -915,7 +937,7 @@ class Vault:
     def _matches_external(self, path: Path) -> bool:
         """True if the exported head is signed and is part of the current chain."""
         try:
-            head = json.loads(Path(path).read_text())
+            head = json.loads(Path(path).read_text(encoding="utf-8"))
             count, last, mac = int(head["count"]), str(head["last"]), str(head["mac"])
         except (OSError, ValueError, KeyError, TypeError):
             return False
@@ -969,7 +991,7 @@ class Vault:
         if not path.exists():
             return not rows
         try:
-            head = json.loads(path.read_text())
+            head = json.loads(path.read_text(encoding="utf-8"))
             count, last, mac = int(head["count"]), str(head["last"]), str(head["mac"])
         except (ValueError, KeyError, TypeError):
             return False
