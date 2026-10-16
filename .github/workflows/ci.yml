@@ -30,10 +30,10 @@ jobs:
       - name: SAFETY.md disclaimer present
         run: |
           test -f SAFETY.md || { echo "SAFETY.md missing"; exit 1; }
-          for s in "Not legal or medical advice" "No filing" "VA-accredited" "processed by the AI service" "dial 988, then press 1"; do
+          for s in "Not legal or medical advice" "No filing" "VA-accredited" "processed by the AI service" "dial 988, then press 1" "pattern-based and can miss"; do
             grep -qF "$s" SAFETY.md || { echo "SAFETY.md missing: $s"; exit 1; }
           done
-          if grep -RniE "HIPAA[- ]compliant|zero retention|records stay local|never send records to an external service" --include='*.md' . ; then echo "privacy overclaim found"; exit 1; fi
+          if grep -RniE "HIPAA[- ]compliant|zero retention|records stay local|never send records to an external service|anonymized|anonymised|de-identified|fully private|no data leaves your computer" --include='*.md' . ; then echo "privacy overclaim found"; exit 1; fi
       - name: No rating predictions rule present
         run: |
           grep -qi "No rating percentage predictions\|No percentage predictions" skills/condition-map/SKILL.md
