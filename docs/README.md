@@ -20,8 +20,8 @@ The [va-claims agent](../agents/va-claims.md) runs:
 - The user names one local folder; records are read only from there.
 - It must not be inside a git repository or a public sync folder.
 - The index and extractions (`_index.json`, `_extract.json`, `claims.json`) are written into that same folder and nowhere else.
-- The skills never commit, upload, or copy the record files. The text the bot reads is processed by the AI service it runs on, so check that service's privacy terms; a fully offline setup needs a local model. Outputs redact what the user does not need.
-- Search first with `scripts/local_search.py` (`--dry-run` prints counts only). Redaction covers SSNs, dates of birth, phone numbers, emails, street addresses, VA file numbers and DoD ID numbers, but it is pattern-based and can miss things, so the user reviews every snippet. Names are not redacted, a bare year ("born in 1961") is not redacted, and ordinary numbers can be over-redacted. Pages are redacted before searching; full dates 17+ years old become `[DATE-YYYY]` unless `--keep-dates` is passed.
+- The skills never commit, upload, or copy the record files. The text the bot reads is processed by the AI service it runs on, so check that service's privacy terms; a fully offline setup needs a local model.
+- Search first with `scripts/local_search.py` (`--dry-run` prints counts only). Redaction is pattern-based: it can miss identifiers and can over-redact, so the user reviews every snippet. Known gaps: names are not redacted; a bare year ("born in 1961") is not redacted; an unlabeled phone such as "555 010 0199" or an unlabeled 7-digit phone is missed; a minor's (child's) date of birth with no birth label is missed. Pages are redacted before searching; dates after a birth label are redacted in every mode; full dates 17+ years old become `[DATE-YYYY]` unless `--keep-dates` is passed.
 - This repository holds fictional test data only (`tests/fake-records/`).
 
 ## Where accredited review fits

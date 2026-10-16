@@ -18,7 +18,7 @@ The bot's AI service processes any text the bot reads. This skill keeps that to 
    `python3 scripts/local_search.py "<folder>" -t "<term>" -t "<term>" --dry-run`
    It prints counts only (files searched, matches per term, hits per file). No record text.
 3. Show the counts. Agree on terms and caps (`--max-hits-per-term`, default 20; `--max-total`, default 100; `--context`, default 80 characters each side).
-4. Ask the user to run the same command without `--dry-run`. Output is JSON: `file`, `page`, `line`, `term`, `context`. SSNs, dates of birth, phone numbers, emails, street addresses, VA file numbers and DoD ID numbers are replaced with `[REDACTED-<KIND>]` (labels such as `DOB:` are kept). Each whole page is redacted before it is searched, and search terms and file names in the output are redacted too. Full dates 17 or more years old are shown as `[DATE-YYYY]` because they may be birth dates; old service or onset dates then show the year only. If the user needs exact old dates, they can rerun with `--keep-dates` and check those snippets by hand (labeled dates of birth stay redacted). Names, including third-party names, are not redacted.
+4. Ask the user to run the same command without `--dry-run`. Output is JSON: `file`, `page`, `line`, `term`, `context`. Before printing, pattern-based redaction replaces these with `[REDACTED-<KIND>]` (labels such as `DOB:` are kept): SSNs; any date that starts within about 25 characters after a birth label (DOB, D.O.B., D-O-B, birth, birthday, birth date, born, or "b." right before a date), in every mode; emails; street addresses, PO boxes and rural routes; state + ZIP after a city or street; VA file numbers; DoD ID numbers; and phones that are labeled (tel, phone, ph, call, cell, mobile, fax) or written as a full 10-digit number with separators. Each whole page is redacted before it is searched, and search terms and file names in the output are redacted too. Full dates 17 or more years old are shown as `[DATE-YYYY]`; `--keep-dates` turns only that off.
 5. The user reviews the snippet list and removes anything they do not want shared. Only the snippets the user approves may be pasted to the bot.
 6. A whole page may be read only if the user explicitly approves that specific file and page, after being told its text goes to the AI service.
 
@@ -26,7 +26,7 @@ The bot's AI service processes any text the bot reads. This skill keeps that to 
 
 - No approval of the snippet list → stop; read nothing.
 - Never read a whole file or page without explicit approval for that page.
-- Redaction is pattern-based and can miss things, and names are never redacted. It can also over-redact (for example a number after a capitalized word and a state code). A bare year such as "born in 1961" is not redacted. Labeled dates of birth (DOB, D.O.B., born on, date of birth) are redacted in every mode, including `--keep-dates` and file names. Ask the user to check every snippet before approving it.
+- Redaction is pattern-based. It can miss identifiers and it can over-redact ordinary numbers. Known gaps: names (including third parties) are never redacted; a bare year such as "born in 1961" is not redacted; an unlabeled phone like "555 010 0199" or an unlabeled 7-digit phone is not redacted; and a minor's (child's) date of birth with no birth label is not redacted, because recent dates are kept. The user reviews every snippet before approving it.
 - Never run the script on a folder inside a git repository or a public sync folder.
 
 ## Output template

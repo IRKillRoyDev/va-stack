@@ -33,8 +33,8 @@ jobs:
           for s in "Not legal or medical advice" "No filing" "VA-accredited" "processed by the AI service" "dial 988, then press 1" "pattern-based and can miss"; do
             grep -qF "$s" SAFETY.md || { echo "SAFETY.md missing: $s"; exit 1; }
           done
-          OVERCLAIM="HIPAA[- ]compliant|zero retention|zero-retention|records stay local|never send records to an external service|anonymized|anonymised|de-identified|deidentified|fully private|completely private|no data leaves your computer|records never leave your computer"
-          if grep -RniIE "$OVERCLAIM" --exclude-dir=.git --exclude=ci.yml --exclude='test_*.py' . ; then echo "privacy overclaim found"; exit 1; fi
+          OVERCLAIM="HIPAA[- ]?compliant|zero retention|zero-retention|zero data retention|records stay local|never send records to an external service|anonymized|anonymised|de-identified|de identified|deidentified|fully private|completely private|100% private|no data leaves your computer|records never leave your computer|data stays on your device|nothing leaves your machine|HIPAAcompliant"
+          bash tests/overclaim_scan.sh "$OVERCLAIM"
       - name: No rating predictions rule present
         run: |
           grep -qi "No rating percentage predictions\|No percentage predictions" skills/condition-map/SKILL.md
