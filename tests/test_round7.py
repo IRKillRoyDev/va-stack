@@ -122,6 +122,7 @@ def test_report_urls_all_ecfr(vault):
         "that tinnitus is related to military noise exposure.",
         "any ringing before service; tinnitus began in 2004",
         "tinnitus began in 2004 after noise exposure.",
+        "tinnitus, recurrent, both ears.",
     ],
 )
 def test_quote_must_not_drop_negation(opinion_vault, text):
@@ -132,10 +133,9 @@ def test_quote_must_not_drop_negation(opinion_vault, text):
 @pytest.mark.parametrize(
     "text",
     [
-        "it is less likely than not that tinnitus is related to military noise"
-        " exposure.",
+        "Examiner: it is less likely than not that tinnitus is related to"
+        " military noise exposure.",
         "Diagnosis: tinnitus, recurrent, both ears.",
-        "tinnitus, recurrent, both ears.",
     ],
 )
 def test_clause_start_quotes_accepted(opinion_vault, text):

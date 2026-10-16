@@ -248,7 +248,8 @@ def test_quotes_in_report_are_redacted(vault):
         {
             "file": "identifiers-fake.txt",
             "page": 1,
-            "quote": "Patient: Pat Example (fictional)  SSN 000-12-3456",
+            "quote": "Patient: Pat Example (fictional)  SSN 000-12-3456"
+            "  DOB: 01/02/1980",
         }
     )
     rep = pi.build_report(data, vault, bot_id=BOT)
