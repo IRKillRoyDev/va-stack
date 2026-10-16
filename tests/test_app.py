@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PW = "correct horse fake"
 FAST = {"time_cost": 1, "memory_cost": 8192, "parallelism": 1}
 RECORDS = ROOT / "examples" / "records"
+XDG = str(Path("/xdg").resolve())  # absolute on every OS (drive on Windows)
 
 
 def _load(name):
@@ -37,7 +38,7 @@ paths = sys.modules["app_paths"]
         ("darwin", {}, "home/Library/Application Support/va-stack"),
         ("win32", {"APPDATA": "/appdata"}, "/appdata/va-stack"),
         ("linux", {}, "home/.local/share/va-stack"),
-        ("linux", {"XDG_DATA_HOME": "/xdg"}, "/xdg/va-stack"),
+        ("linux", {"XDG_DATA_HOME": XDG}, Path(XDG, "va-stack").as_posix()),
         ("linux", {"XDG_DATA_HOME": "relative"}, "home/.local/share/va-stack"),
     ],
 )

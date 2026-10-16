@@ -150,6 +150,8 @@ jobs:
       - name: Pytest (window tests skip without a display)
         shell: pwsh
         run: |
+          # Use Git Bash for the shell-script checks, not the WSL bash.exe stub.
+          $env:PATH = "C:\Program Files\Git\bin;" + $env:PATH
           .venv\Scripts\Activate.ps1
           python -m pytest -q -rs
           if ($LASTEXITCODE -ne 0) { exit 1 }
