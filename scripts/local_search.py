@@ -324,20 +324,31 @@ def snippet(line: str, start: int, end: int, context: int) -> str:
     return text
 
 
-def search(
-    folder: Path,
+def iter_folder_pages(folder: Path):
+    """Yield (relative path, page number, raw page text) for a folder.
+
+    When to use: as the page source for search_pages() on plain files.
+    """
+    for path in iter_record_files(folder):
+        rel = path.relative_to(folder).as_posix()
+        for page_no, raw_page in enumerate(load_pages(path), start=1):
+            yield rel, page_no, raw_page
+
+
+def search_pages(
+    pages,
     terms: list[str],
     max_hits_per_term: int = DEFAULT_MAX_HITS_PER_TERM,
     max_total: int = DEFAULT_MAX_TOTAL,
     context: int = DEFAULT_CONTEXT,
     keep_dates: bool = False,
 ) -> dict:
-    """Search record files for terms and return capped, redacted hits.
+    """Search (path, page, raw text) tuples and return capped, redacted hits.
 
-    When to use: the main entry point; pass the caller's terms and caps.
-    Matching is case-insensitive and literal (not regex). Each page is
-    redacted before it is searched, so snippets, terms, and file names in
-    the output only ever come from redacted text.
+    When to use: the shared core for folder search and the encrypted
+    records vault. Matching is case-insensitive and literal (not regex).
+    Each page is redacted before it is searched, so snippets, terms, and
+    file names in the output only ever come from redacted text.
     """
     clean_terms = [t for t in (s.strip() for s in terms) if t]
     shown = {t: redact(t, keep_dates)[0] for t in clean_terms}
@@ -346,35 +357,32 @@ def search(
     matches_found = {shown[t]: 0 for t in clean_terms}
     redaction_counts: dict[str, int] = {}
     hits: list[dict] = []
-    files = iter_record_files(folder)
+    files: set[str] = set()
     truncated = False
-    for path in files:
-        rel = redact(path.relative_to(folder).as_posix(), keep_dates)[0]
-        for page_no, raw_page in enumerate(load_pages(path), start=1):
-            page_text, counts = redact(raw_page, keep_dates)
-            for kind, n in counts.items():
-                redaction_counts[kind] = redaction_counts.get(kind, 0) + n
-            for line_no, line in enumerate(page_text.splitlines(), start=1):
-                for term, pattern in patterns.items():
-                    for m in pattern.finditer(line):
-                        matches_found[shown[term]] += 1
-                        if (
-                            per_term[term] >= max_hits_per_term
-                            or len(hits) >= max_total
-                        ):
-                            truncated = True
-                            continue
-                        ctx = snippet(line, m.start(), m.end(), context)
-                        per_term[term] += 1
-                        hits.append(
-                            {
-                                "file": rel,
-                                "page": page_no,
-                                "line": line_no,
-                                "term": shown[term],
-                                "context": ctx,
-                            }
-                        )
+    for raw_rel, page_no, raw_page in pages:
+        files.add(raw_rel)
+        rel = redact(raw_rel, keep_dates)[0]
+        page_text, counts = redact(raw_page, keep_dates)
+        for kind, n in counts.items():
+            redaction_counts[kind] = redaction_counts.get(kind, 0) + n
+        for line_no, line in enumerate(page_text.splitlines(), start=1):
+            for term, pattern in patterns.items():
+                for m in pattern.finditer(line):
+                    matches_found[shown[term]] += 1
+                    if per_term[term] >= max_hits_per_term or len(hits) >= max_total:
+                        truncated = True
+                        continue
+                    ctx = snippet(line, m.start(), m.end(), context)
+                    per_term[term] += 1
+                    hits.append(
+                        {
+                            "file": rel,
+                            "page": page_no,
+                            "line": line_no,
+                            "term": shown[term],
+                            "context": ctx,
+                        }
+                    )
     return {
         "files_searched": len(files),
         "terms": [shown[t] for t in clean_terms],
@@ -385,6 +393,30 @@ def search(
         "redactions": redaction_counts,
         "hits": hits,
     }
+
+
+def search(
+    folder: Path,
+    terms: list[str],
+    max_hits_per_term: int = DEFAULT_MAX_HITS_PER_TERM,
+    max_total: int = DEFAULT_MAX_TOTAL,
+    context: int = DEFAULT_CONTEXT,
+    keep_dates: bool = False,
+) -> dict:
+    """Search record files in a folder and return capped, redacted hits.
+
+    When to use: plain-folder search without the encrypted vault.
+    """
+    result = search_pages(
+        iter_folder_pages(folder),
+        terms,
+        max_hits_per_term,
+        max_total,
+        context,
+        keep_dates,
+    )
+    result["files_searched"] = len(iter_record_files(folder))
+    return result
 
 
 def dry_run_summary(result: dict) -> dict:
