@@ -13,6 +13,8 @@ jobs:
           python-version: "3.12"
       - name: Check every claim row has a CFR cite and a record cite
         run: python3 tests/check_citations.py
+      - name: Check claim-submission track step lists
+        run: python3 tests/check_submission_tracks.py
       - name: Skill frontmatter present
         run: |
           for f in skills/*/SKILL.md; do
@@ -22,4 +24,4 @@ jobs:
       - name: claim-submission guardrails present
         run: |
           f=skills/claim-submission/SKILL.md
-          grep -q 'never submits' "$f" && grep -q '^1\. \*\*Validate primary sources' "$f" && grep -q '§3.155' "$f" || { echo "claim-submission guardrails missing"; exit 1; }
+          grep -q 'never submits' "$f" && grep -q 'Step 0: Ask which track' "$f" && grep -q 'Track B2' "$f" && grep -q '§3.155' "$f" || { echo "claim-submission guardrails missing"; exit 1; }
