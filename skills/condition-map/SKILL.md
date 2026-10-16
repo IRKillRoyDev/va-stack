@@ -24,7 +24,7 @@ Run [local-search](../local-search/SKILL.md) first for any extra evidence terms 
 ## Stop rules
 
 - No cfr-fetch for this session → stop and run cfr-fetch.
-- Never assign a DC or basis without quoting the fetched CFR text that supports it.
+- Never assign a DC or basis without quoting the fetched CFR text it rests on.
 - Never mark an element `shown` without a record cite. If unsure, it is `missing`.
 - No "likely to be granted" statements. Percentage estimates come only from proposed-issues and carry its notice.
 
