@@ -59,3 +59,19 @@ jobs:
         run: flake8 .
       - name: Pytest
         run: pytest -q
+  gui-headless:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install xvfb and tkinter
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
+      - name: Install pinned dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Drive the Unlock and Review windows under Xvfb
+        run: |
+          python -c "import tkinter; print('tk', tkinter.TkVersion)"
+          xvfb-run -a pytest -v -rs tests/test_gui_headless.py | tee gui.txt
+          grep -q "1 passed" gui.txt
