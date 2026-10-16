@@ -35,11 +35,13 @@ jobs:
           done
           OVERCLAIM="HIPAA[- ]?compliant|zero retention|zero-retention|zero data retention|records stay local|never send records to an external service|anonymized|anonymised|de-identified|de identified|deidentified|fully private|completely private|100% private|no data leaves your computer|records never leave your computer|data stays on your device|nothing leaves your machine|HIPAAcompliant"
           bash tests/overclaim_scan.sh "$OVERCLAIM"
-      - name: No rating predictions rule present
+      - name: Estimate notice present
         run: |
-          grep -qi "No rating percentage predictions\|No percentage predictions" skills/condition-map/SKILL.md
-          grep -qi "with a percentage" skills/claim-citations/SKILL.md
-          grep -qi "No outcome or rating predictions" skills/claim-submission/SKILL.md
+          N="Unofficial estimate, not a VA decision. It is likely to differ after the VA exam (C&P exam). Confirm with a VA-accredited representative."
+          for f in SAFETY.md skills/proposed-issues/SKILL.md agents/va-claims.md; do
+            grep -qF "$N" "$f" || { echo "$f missing estimate notice"; exit 1; }
+          done
+          grep -qF "insufficient evidence to estimate" skills/proposed-issues/SKILL.md
   python:
     runs-on: ubuntu-latest
     steps:
