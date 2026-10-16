@@ -25,7 +25,7 @@ Parts fetched: **3** (adjudication), **4** (rating schedule), **14** (legal serv
 3. Sanity check: Part 3 contains `N="3.303"`, `N="3.306"`, `N="3.307"`, `N="3.309"`, `N="3.310"`; Part 4 contains `N="4.71a"` and `N="4.130"`; Part 14 contains `N="14.629"` and `N="14.631"`; Part 20 contains `N="20.202"`. Cite Part 14 and Part 20 sections only from this fetched text. If any is missing, treat the fetch as failed.
 4. Split each part by section (`DIV8 N="..."`). Keep heading and text keyed by section number. Keep diagnostic-code tables keyed by DC number within their section.
 5. Store the fetched XML in the session's private working folder (never in this repo) with the date in the filename.
-6. Cite as: `38 CFR §3.310(a) (eCFR, as of {DATE})`; for codes: `38 CFR §4.71a, DC 5242 (eCFR, as of {DATE})`. Quote text exactly from the fetched copy.
+6. Cite as: `38 CFR §3.310(a) (eCFR, as of {DATE})`; for codes: `38 CFR §4.71a, DC 5237 (eCFR, as of {DATE})`. Quote text exactly from the fetched copy.
 
 ## Stop rules
 

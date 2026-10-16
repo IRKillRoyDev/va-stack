@@ -32,6 +32,6 @@ Requires: a successful `cfr-fetch` session and `records-intake` extractions.
 As of: <eCFR date>
 | Diagnosis | DC (section) | Basis | Current dx | In-service / qualifier | Nexus | CFR quote |
 |-----------|--------------|-------|------------|------------------------|-------|-----------|
-| <dx> | DC 5242 (§4.71a) | Direct §3.303 | shown: file p.# "..." | shown/missing | shown/missing | "..." |
+| <dx> | DC 5237 (§4.71a) | Direct §3.303 | shown: file p.# "..." | shown/missing | shown/missing | "..." |
 Schedule criteria (quoted, no prediction): <quote>
 ```

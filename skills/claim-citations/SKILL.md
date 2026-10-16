@@ -27,6 +27,6 @@ description: For each claimable condition from condition-map, build a table of c
 As of: <eCFR date>. Not legal or medical advice; verify with a VA-accredited representative, VSO, or attorney.
 | Condition | Basis | CFR | DC | Evidence | Gaps |
 |-----------|-------|-----|----|----------|------|
-| <condition> | <basis> | 38 CFR §3.303; §4.71a | 5242 | file.txt p.2 "..." | <gaps or none> |
+| <condition> | <basis> | 38 CFR §3.303; §4.71a | 5237 | file.txt p.2 "..." | <gaps or none> |
 Dropped: <condition – reason>
 ```

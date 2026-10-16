@@ -27,7 +27,7 @@ Then run the shared validation and the steps for that track only. Each track beg
 
 ## Track A1: Active duty (pre-discharge, BDD)
 
-1. **Validate sources:** `https://www.va.gov/disability/how-to-file-claim/when-to-file/pre-discharge-claim/` (BDD program and its current filing window, e.g. "180 to 90 days before discharge" as of this writing; quote the live text), `https://www.va.gov/find-forms/about-form-21-526ez/` (revision date), 38 CFR §3.155 and §3.151.
+1. **Validate sources:** `https://www.va.gov/disability/how-to-file-claim/when-to-file/pre-discharge-claim/` (BDD program and its current filing window; quote the window exactly as the live page states it), `https://www.va.gov/find-forms/about-form-21-526ez/` (revision date), 38 CFR §3.155 and §3.151.
 2. **Check eligibility for the window:** compare the user's separation date (the user provides it) to the quoted live window. If the user is outside the window, quote what the page says applies instead.
 3. **Gather evidence:** service treatment records and the `claim-citations` table; list the open gaps from `related-gaps`. Cite §3.159.
 4. **Path:** the online or form path the BDD page describes now, including any exam availability requirement it states. Cite URL.
@@ -81,17 +81,22 @@ Steps differ by branch of service, so check your branch's current regulation wit
 - Never state a form number, revision date, deadline, or effective-date rule unless quoted from a source fetched in this session.
 - No outcome or rating predictions.
 
-## Output template
+## Output template (all tracks)
 
 ```
-Sources validated (as of <date>):
-| Source | URL / section | Status | Detail (form no. + revision date / section heading) |
-|--------|---------------|--------|------------------------------------------------------|
-Track: <A1|A2|B1|B2|C>
-Step 2 Intent to file: ... [cite: URL; 38 CFR §3.155 (eCFR, as of <date>)]
-Step 3 Evidence: <from claim-citations>  Gaps: <...>  [cite]
-Step 4 Path: online / VA Form 21-526EZ (rev. <date>)  [cite]
-Step 5 FDC vs standard: <quoted, or "no longer offered">  [cite]
-Step 6 Checklist: ...
-Not legal advice. The bot does not file. Review with a VA-accredited representative, VSO, or attorney.
+Track: <A1 | A2 | B1 | B2 | C>   As of: <date>
+Sources validated:
+| Source | URL / section | Status | Detail (form no. + revision date / section heading / quoted window) |
+|--------|---------------|--------|----------------------------------------------------------------------|
+Steps (one row per step of the chosen track, in order):
+| # | Step | What the source says (quoted) | Cite (URL or section) |
+|---|------|-------------------------------|-----------------------|
+| 1 | Validate sources | all confirmed / STOPPED: <source> | ... |
+| 2 | <A1 window check / A2 IDES stages / B1 intent to file / B2 lane / C benefit and relationship> | "..." | ... |
+| 3 | <A2 fit vs separation vs retirement / evidence> | "..." | ... |
+| … | ... | ... | ... |
+Evidence: <claim-citations rows>   Open gaps: <related-gaps rows, "needs more documentation">
+Forms named (only if validated): <form, revision date, URL>
+Checklist for the user: ...
+Not legal advice. The bot does not file, sign, or contact VA. Review with a VA-accredited representative, VSO, or attorney (and the PEBLO for A2).
 ```
