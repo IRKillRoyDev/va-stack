@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = [
     "README.md",
     "TRUST.md",
+    "schemas/README.md",
     *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "skills").glob("*/SKILL.md")),
 ]
 DISABLE_LINE = "<!-- markdownlint-disable-line MD013 -->"
