@@ -1,8 +1,9 @@
 """The fill window: fill a VA form from your vault, one data point at a time.
 
-The form shows in a QPdfView (QtPdf). A side panel shows one data point at
-a time with a checklist of every place it goes on the form, and Next (Finish
-on the last one). Two settings, saved in the vault's one rules table:
+A panel on the left shows one data point at a time with a checklist of
+every place it goes on the form, and Next (Finish on the last one); the form
+shows on the right in a QPdfView (QtPdf). Two settings, saved in the
+vault's one rules table:
 
 - "By data point": one step per data point, holding every place it goes.
   Off, the steps follow the form by page and field. Both are orderings of
@@ -11,8 +12,8 @@ on the last one). Two settings, saved in the vault's one rules table:
   place of the current data point is ticked.
 
 A data point missing from the vault gets an entry box that saves to the
-vault; sensitive ones (master_data.is_sensitive, the existing name rule)
-are typed hidden, with a Show button. There is no copy feature: no copy
+vault. Every value is masked by default, the one held in the vault and the
+one being typed, and each has its own Show toggle. There is no copy feature: no copy
 button, no context menu, and copy / cut keys do nothing in the entry box.
 Finish writes "<name> fillable.pdf" next to the form and "<name>
 completed.pdf" in the Completed forms folder (fill_engine.fill_form);
@@ -27,8 +28,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QPointF
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
@@ -63,31 +63,8 @@ MISSING = "Not in your vault yet. Type it and save it, or leave it blank."
 SAVED = "Saved in your vault: "
 
 
-_UPPER = {"ssn", "va", "dob", "id", "zip", "dd"}
-
-
-def _title(name: str) -> str:
-    """A data-point name for display: "va_file_number" -> "VA file number"."""
-    words = [w.upper() if w in _UPPER else w for w in name.split("_")]
-    text = " ".join(words)
-    return text[:1].upper() + text[1:]
-
-
-class EntryBox(QLineEdit):
-    """A line edit with no copy feature: no context menu, copy / cut ignored."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-        self.setDragEnabled(False)
-
-    def keyPressEvent(self, event) -> None:  # Qt's method name
-        if event.matches(QKeySequence.StandardKey.Copy) or event.matches(
-            QKeySequence.StandardKey.Cut
-        ):
-            event.accept()
-            return
-        super().keyPressEvent(event)
+EntryBox = qt.EntryBox  # no copy feature; shared with the master window
+_title = qt.data_point_title
 
 
 class FillWindow(qt.Window):
@@ -137,8 +114,15 @@ class FillWindow(qt.Window):
 
         self.title = qt._label("", size=15, bold=True, name="data_point")
         self.value = qt._label("", name="value")
+        self.value_show = QPushButton("Show")
+        self.value_show.setObjectName("value_show")
+        self.value_show.setCheckable(True)
+        self.value_show.toggled.connect(self._show_value)
         side.addWidget(self.title)
-        side.addWidget(self.value)
+        value_row = QHBoxLayout()
+        value_row.addWidget(self.value, 1)
+        value_row.addWidget(self.value_show)
+        side.addLayout(value_row)
         entry_row = QHBoxLayout()
         self.entry = EntryBox()
         self.entry.setObjectName("entry")
@@ -165,10 +149,10 @@ class FillWindow(qt.Window):
         side.addWidget(self.status)
 
         split = QSplitter()
+        split.addWidget(panel)  # data entry on the left, the form on the right
         split.addWidget(self.view)
-        split.addWidget(panel)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 3)
         outer = QHBoxLayout(self)
         outer.addWidget(split)
         self.resize(1100, 760)
@@ -197,13 +181,13 @@ class FillWindow(qt.Window):
             return
         step = self.steps[self.index]
         name = step.data_point
-        sensitive = master_data.is_sensitive(name)
         self.title.setText(_title(name))
         self.title.setProperty("data_point", name)
-        held = self.vault.data_point_values([name], self.bot_id)
-        if name in held:
-            shown = master_data.MASK if sensitive else held[name]
-            self.value.setText(SAVED + shown)
+        self.value_show.setChecked(False)  # every step starts masked
+        held = name in self.vault.data_point_values([name], self.bot_id)
+        self.value_show.setVisible(held)
+        if held:
+            self.value.setText(SAVED + master_data.MASK)
             for w in (self.entry, self.show_btn, self.save_btn):
                 w.hide()
         else:
@@ -211,11 +195,8 @@ class FillWindow(qt.Window):
             self.entry.clear()
             self.show_btn.setChecked(False)
             self._show(False)
-            self.entry.show()
-            self.save_btn.show()
-            self.show_btn.setVisible(sensitive)
-            if not sensitive:
-                self.entry.setEchoMode(QLineEdit.EchoMode.Normal)
+            for w in (self.entry, self.show_btn, self.save_btn):
+                w.show()
         for box in self.boxes:
             self.checklist.removeWidget(box)
             box.hide()
@@ -244,10 +225,22 @@ class FillWindow(qt.Window):
         self.finish_btn.setEnabled(ok)
 
     def _show(self, on: bool) -> None:
-        if master_data.is_sensitive(self.title.property("data_point") or ""):
-            mode = QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password
-            self.entry.setEchoMode(mode)
+        """The typed value's own Show toggle."""
+        mode = QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password
+        self.entry.setEchoMode(mode)
         self.show_btn.setText("Hide" if on else "Show")
+
+    def _show_value(self, on: bool) -> None:
+        """The held value's own Show toggle (read from the vault on demand)."""
+        self.value_show.setText("Hide" if on else "Show")
+        name = self.title.property("data_point")
+        if not name or self.value.text() == MISSING:
+            return
+        if on:
+            held = self.vault.data_point_values([name], self.bot_id)
+            self.value.setText(SAVED + held.get(name, ""))
+        else:
+            self.value.setText(SAVED + master_data.MASK)
 
     # ---- actions --------------------------------------------------------
     def save(self) -> None:

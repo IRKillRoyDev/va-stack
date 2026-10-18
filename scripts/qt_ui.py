@@ -28,6 +28,7 @@ from PySide6.QtCore import (
     QIODevice,
     QObject,
     QPointF,
+    Qt,
     QTimer,
     Signal,
 )
@@ -186,6 +187,37 @@ def _label(text: str, *, size: int = 0, bold: bool = False, name: str = "") -> Q
     if name:
         lab.setObjectName(name)
     return lab
+
+
+_UPPER = {"ssn", "va", "dob", "id", "zip", "dd"}
+
+
+def data_point_title(name: str) -> str:
+    """A data-point name for display: "va_file_number" -> "VA file number"."""
+    words = [w.upper() if w in _UPPER else w for w in name.split("_")]
+    text = " ".join(words)
+    return text[:1].upper() + text[1:]
+
+
+class EntryBox(QLineEdit):
+    """A line edit with no copy feature: no context menu, copy / cut ignored.
+
+    Typed text starts masked (password echo); a Show toggle may unmask it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.setDragEnabled(False)
+        self.setEchoMode(QLineEdit.EchoMode.Password)
+
+    def keyPressEvent(self, event) -> None:  # Qt's method name
+        if event.matches(QKeySequence.StandardKey.Copy) or event.matches(
+            QKeySequence.StandardKey.Cut
+        ):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 def _button(text: str, slot, name: str = "") -> QPushButton:
