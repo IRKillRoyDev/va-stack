@@ -146,3 +146,61 @@ def test_readme_has_check_prompt_and_download_check():
         "once releases are published",
     ):
         assert needle in verify, needle
+
+
+def test_trust_doc_states_what_a_field_map_request_sends():
+    """TRUST.md says what leaves with a field-map request, after a yes only."""
+    text = TRUST.read_text(encoding="utf-8")
+    assert "## Blank forms for your AI bot" in text
+    part = " ".join(_section(text, "## Blank forms for your AI bot").split())
+    for needle in (
+        "only after you answer yes",
+        "sanitized copy of the blank form",
+        "names of your data points, never their values",
+        "form number",
+        "page sizes",
+        "SHA-256",
+        "filled-in answers",
+        "metadata",
+        "earlier versions",
+        "scripts",
+        "attachments",
+        "Is this form blank",
+        "warns",
+        "OCR",
+        "keyed hashes",
+        "not used by any window yet",
+        "tests/test_field_map_send.py",
+        "tests/test_vault_data_points.py",
+    ):
+        assert needle in part, needle
+    for test in ("tests/test_field_map_send.py", "tests/test_vault_data_points.py"):
+        assert (ROOT / test).is_file()
+
+
+def test_trust_doc_never_list_covers_data_point_values():
+    text = " ".join(TRUST.read_text(encoding="utf-8").split())
+    never = text.split("## What it never does", 1)[1].split("## ", 1)[0]
+    assert "data-point values" in never and "without asking you first" in never
+
+
+def test_trust_doc_field_map_claims_match_the_consent_prompt():
+    """The words TRUST.md promises are the words the program shows."""
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "field_map", ROOT / "scripts" / "field_map.py"
+    )
+    fm = importlib.util.module_from_spec(spec)
+    sys.modules["field_map"] = fm
+    spec.loader.exec_module(fm)
+    prompt = " ".join(fm.CONSENT_PROMPT.split())
+    trust = " ".join(TRUST.read_text(encoding="utf-8").split())
+    for claim in (
+        "sanitized copy of the blank form",
+        "names only, never their values",
+        "Nothing is sent unless you answer yes",
+    ):
+        assert claim in prompt, claim
+    assert "names of your data points, never their values" in trust

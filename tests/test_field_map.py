@@ -24,8 +24,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "schemas" / "field_map.schema.json"
 CATALOG = ROOT / "schemas" / "data_points.json"
+FORM_TITLES = {
+    k: v["title"]
+    for k, v in json.loads(
+        (ROOT / "skills" / "proposed-issues" / "forms.json").read_text(encoding="utf-8")
+    )["forms"].items()
+}
 SYNC = ROOT / "tools" / "sync_field_map_enum.py"
-LETTER = (612.0, 792.0)
+LETTER = (612, 792)
+BOT = "test-bot-fake"
 CATEGORIES = ["identity", "contact", "housing", "service", "banking", "claim"]
 NAME_RE = r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*"
 
@@ -71,7 +78,7 @@ class NamesOnly:
         object.__setattr__(self, "_names", list(names))
         object.__setattr__(self, "calls", [])
 
-    def data_point_names(self):
+    def data_point_names(self, bot_id):
         self.calls.append("data_point_names")
         return list(self._names)
 
@@ -112,14 +119,26 @@ def form_pdf(tmp_path):
 REQUESTED = ["condition", "approx_date", "benefit"]
 
 
-@pytest.fixture
-def request_(fm, form_pdf):
-    return fm.build_request(
-        form_pdf,
-        form_id="21-526EZ",
-        form_name="Fictional claim form",
-        names_source=NamesOnly(REQUESTED),
+def _build(fm, pdf, form_id="21-526EZ", names_source=None):
+    """Prepare a request, say yes (blank confirmed) and release it."""
+    prep = fm.prepare_request(
+        pdf,
+        form_id=form_id,
+        names_source=names_source or NamesOnly(REQUESTED),
+        bot_id=BOT,
     )
+    prep.answer(True, blank_confirmed=True)
+    return prep.release()
+
+
+@pytest.fixture
+def sent_(fm, form_pdf):
+    return _build(fm, form_pdf)
+
+
+@pytest.fixture
+def request_(sent_):
+    return sent_[0]
 
 
 def _map(request, **over):
@@ -333,16 +352,17 @@ def test_module_refuses_a_drifted_schema(fm, monkeypatch):
 
 
 # ---------------- outbound ----------------
-def test_valid_outbound_request(fm, request_, form_pdf):
+def test_valid_outbound_request(fm, sent_):
     import hashlib
 
+    request_, data = sent_
     assert request_ == {
         "schema_version": 1,
         "kind": "field_map_request",
         "form": {
             "id": "21-526EZ",
-            "name": "Fictional claim form",
-            "sha256": hashlib.sha256(form_pdf.read_bytes()).hexdigest(),
+            "name": FORM_TITLES["21-526EZ"],
+            "sha256": hashlib.sha256(data).hexdigest(),
             "page_count": 2,
             "page_sizes": [
                 {"width": LETTER[0], "height": LETTER[1]},
@@ -351,15 +371,13 @@ def test_valid_outbound_request(fm, request_, form_pdf):
         },
         "data_points": sorted(REQUESTED),
     }
-    fm.check_outbound(request_)  # the gate passes its own output
+    fm.check_outbound(request_, data)  # the gate passes its own output
 
 
 def test_outbound_builder_never_reads_vault_values(fm, form_pdf):
     src = NamesOnly(_names())
-    req = fm.build_request(
-        form_pdf, form_id="10182", form_name="Fictional appeal", names_source=src
-    )
-    assert src.calls == ["data_point_names"]
+    req = _build(fm, form_pdf, "10182", src)[0]
+    assert src.calls == ["data_point_names"]  # with the bot id, nothing else
     assert req["data_points"] == sorted(_names())
 
 
@@ -374,14 +392,9 @@ def test_outbound_sends_identifier_names_but_no_values(fm, form_pdf):
         "phone",
         "service_number",
     ]
-    req = fm.build_request(
-        form_pdf,
-        form_id="VA 21-0781",
-        form_name="Fictional statement form",
-        names_source=NamesOnly(names),
-    )
+    req, data = _build(fm, form_pdf, "21-0966", NamesOnly(names))
     assert req["data_points"] == sorted(names)
-    fm.check_outbound(req)
+    fm.check_outbound(req, data)
 
 
 def test_outbound_name_screen_is_catalog_membership_not_blocked_name():
@@ -409,89 +422,83 @@ def test_outbound_name_screen_is_catalog_membership_not_blocked_name():
 )
 def test_outbound_rejects_value_shaped_or_unknown_names(fm, form_pdf, bad):
     with pytest.raises(fm.FieldMapError):
-        fm.build_request(
-            form_pdf,
-            form_id="21-526EZ",
-            form_name="Fictional claim form",
-            names_source=NamesOnly(["condition", bad]),
-        )
+        _build(fm, form_pdf, "21-526EZ", NamesOnly(["condition", bad]))[0]
 
 
 @pytest.mark.parametrize("bad", [None, 7, ["condition"], {"condition": "x"}])
 def test_outbound_rejects_non_string_names(fm, form_pdf, bad):
     with pytest.raises(fm.FieldMapError):
-        fm.build_request(
-            form_pdf,
-            form_id="21-526EZ",
-            form_name="Fictional claim form",
-            names_source=NamesOnly(["condition", bad]),
-        )
+        _build(fm, form_pdf, "21-526EZ", NamesOnly(["condition", bad]))[0]
 
 
 @pytest.mark.parametrize(
-    "form_id", ["21-526EZ", "VA 21-0781", "20-0995", "10182", "21P-534EZ", "21-0966"]
+    "form_id", ["21-526EZ", "20-0995", "20-0996", "10182", "21P-534EZ", "21-0966"]
 )
 def test_outbound_accepts_real_form_ids(fm, form_pdf, form_id):
-    req = fm.build_request(
-        form_pdf,
-        form_id=form_id,
-        form_name="Fictional claim form",
-        names_source=NamesOnly(["condition"]),
-    )
+    req = _build(fm, form_pdf, form_id, NamesOnly(["condition"]))[0]
     assert req["form"]["id"] == form_id
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    "value",
     [
-        ("form_id", "123-45-6789"),
-        ("form_id", "000123456789"),
-        ("form_id", "21 526EZ"),
-        ("form_id", "VA21-0781"),
-        ("form_id", "va 21-0781"),
-        ("form_id", "21-526EZ "),
-        ("form_id", "fake@x.test"),
-        ("form_name", "Claim for 123-45-6789"),
-        ("form_name", "Claim of fake.user@mail.example.test"),
-        ("form_name", "Seen 03/14/2027"),
-        ("form_name", "Seen March 14"),
-        ("form_name", "Account 0001 2345 6789"),
-        ("form_name", "a" * 81),
-        ("form_name", " ".join(["word"] * 13)),
-        ("form_name", "Line one\nline two"),
+        "123-45-6789",
+        "000123456789",
+        "21 526EZ",
+        "VA21-0781",
+        "va 21-0781",
+        "VA 21-0781",
+        "21-526EZ ",
+        "fake@x.test",
     ],
 )
-def test_outbound_rejects_values_in_form_id_or_name(fm, form_pdf, field, value):
-    kw = {"form_id": "21-526EZ", "form_name": "Fictional claim form", field: value}
+def test_outbound_rejects_values_in_form_id(fm, form_pdf, value):
     with pytest.raises(fm.FieldMapError) as err:
-        fm.build_request(form_pdf, names_source=NamesOnly(["condition"]), **kw)
+        _build(fm, form_pdf, value, NamesOnly(["condition"]))
+    assert value.strip() not in str(err.value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Claim for 123-45-6789",
+        "Claim of fake.user@mail.example.test",
+        "Seen 03/14/2027",
+        "Seen March 14",
+        "Account 0001 2345 6789",
+        "a" * 81,
+        " ".join(["word"] * 13),
+        "Line one\nline two",
+        "Fictional claim form",
+    ],
+)
+def test_outbound_rejects_any_form_name_but_the_catalog_title(fm, sent_, value):
+    bad, data = copy.deepcopy(sent_[0]), sent_[1]
+    bad["form"]["name"] = value
+    with pytest.raises(fm.FieldMapError) as err:
+        fm.check_outbound(bad, data)
     assert value.strip() not in str(err.value)
 
 
 def test_outbound_rejects_empty_and_duplicate_names(fm, form_pdf):
     for names in ([], ["condition", "condition"]):
         with pytest.raises(fm.FieldMapError):
-            fm.build_request(
-                form_pdf,
-                form_id="21-526EZ",
-                form_name="Fictional claim form",
-                names_source=NamesOnly(names),
-            )
+            _build(fm, form_pdf, "21-526EZ", NamesOnly(names))[0]
 
 
 @pytest.mark.parametrize("path", [(), ("form",)])
-def test_outbound_gate_rejects_unknown_key_at_every_level(fm, request_, path):
-    bad = copy.deepcopy(request_)
+def test_outbound_gate_rejects_unknown_key_at_every_level(fm, sent_, path):
+    bad = copy.deepcopy(sent_[0])
     node = bad
     for p in path:
         node = node[p]
     node["note"] = "x"
     with pytest.raises(fm.FieldMapError):
-        fm.check_outbound(bad)
-    bad = copy.deepcopy(request_)
+        fm.check_outbound(bad, sent_[1])
+    bad = copy.deepcopy(sent_[0])
     bad["form"]["page_sizes"][0]["dpi"] = 72
     with pytest.raises(fm.FieldMapError):
-        fm.check_outbound(bad)
+        fm.check_outbound(bad, sent_[1])
 
 
 @pytest.mark.parametrize(
@@ -511,35 +518,25 @@ def test_outbound_gate_rejects_unknown_key_at_every_level(fm, request_, path):
         lambda r: r.update(schema_version=2),
     ],
 )
-def test_outbound_gate_rejects_tampered_payload(fm, request_, mutate):
-    bad = copy.deepcopy(request_)
+def test_outbound_gate_rejects_tampered_payload(fm, sent_, mutate):
+    bad = copy.deepcopy(sent_[0])
     mutate(bad)
     with pytest.raises(fm.FieldMapError):
-        fm.check_outbound(bad)
+        fm.check_outbound(bad, sent_[1])
 
 
 def test_outbound_rejects_unreadable_form(fm, tmp_path):
     not_pdf = tmp_path / "x.pdf"
     not_pdf.write_bytes(b"not a pdf")
     with pytest.raises(fm.FieldMapError):
-        fm.build_request(
-            not_pdf,
-            form_id="21-526EZ",
-            form_name="Fictional claim form",
-            names_source=NamesOnly(["condition"]),
-        )
+        _build(fm, not_pdf, "21-526EZ", NamesOnly(["condition"]))[0]
 
 
 # ---------------- rotated pages (/Rotate) ----------------
 @pytest.mark.parametrize("rotate", [90, 180, 270, -90])
 def test_rotated_pages_report_the_size_as_displayed(fm, tmp_path, rotate):
     pdf = _pdf(tmp_path / "rotated-fake.pdf", pages=1, rotate=rotate)
-    req = fm.build_request(
-        pdf,
-        form_id="21-526EZ",
-        form_name="Fictional claim form",
-        names_source=NamesOnly(["condition"]),
-    )
+    req = _build(fm, pdf, "21-526EZ", NamesOnly(["condition"]))[0]
     w, h = LETTER if rotate % 180 == 0 else LETTER[::-1]
     assert req["form"]["page_sizes"] == [{"width": w, "height": h}]
 
@@ -547,12 +544,7 @@ def test_rotated_pages_report_the_size_as_displayed(fm, tmp_path, rotate):
 @pytest.mark.parametrize("rotate", [90, 270])
 def test_rotated_rects_are_checked_against_the_displayed_page(fm, tmp_path, rotate):
     pdf = _pdf(tmp_path / "rotated-fake.pdf", pages=1, rotate=rotate)
-    req = fm.build_request(
-        pdf,
-        form_id="21-526EZ",
-        form_name="Fictional claim form",
-        names_source=NamesOnly(["condition"]),
-    )
+    req = _build(fm, pdf, "21-526EZ", NamesOnly(["condition"]))[0]
     field = {"page": 1, "type": "text", "data_point": "condition"}
     ok = {
         "schema_version": 1,
@@ -972,12 +964,7 @@ def test_errors_name_the_location_not_the_bad_text(fm, request_, mutate, where):
 def test_outbound_errors_never_echo_names(fm, form_pdf):
     for bad in (SECRET, "fake.user@mail.example.test", "account 0001 2345 6789"):
         with pytest.raises(fm.FieldMapError) as err:
-            fm.build_request(
-                form_pdf,
-                form_id="21-526EZ",
-                form_name="Fictional claim form",
-                names_source=NamesOnly(["condition", bad]),
-            )
+            _build(fm, form_pdf, "21-526EZ", NamesOnly(["condition", bad]))[0]
         msg = str(err.value)
         assert bad not in msg and "6789" not in msg and "@" not in msg, msg
         assert "$.data_points[1]" in msg, msg
@@ -1181,11 +1168,11 @@ def test_b3_whole_numbers_must_be_ints(fm, request_, mutate):
         lambda r: r.update(schema_version=True),
     ],
 )
-def test_b3_outbound_ints_are_exact(fm, request_, mutate):
-    bad = copy.deepcopy(request_)
+def test_b3_outbound_ints_are_exact(fm, sent_, mutate):
+    bad = copy.deepcopy(sent_[0])
     mutate(bad)
     with pytest.raises(fm.FieldMapError):
-        fm.check_outbound(bad)
+        fm.check_outbound(bad, sent_[1])
 
 
 def test_b3_str_subclass_is_refused(fm, request_):
@@ -1218,12 +1205,7 @@ def test_b3_lone_surrogate_in_text_is_a_field_map_error(fm, request_, where):
 
 def test_b3_lone_surrogate_in_outbound_text_is_a_field_map_error(fm, form_pdf):
     with pytest.raises(fm.FieldMapError):
-        fm.build_request(
-            form_pdf,
-            form_id="21-526EZ",
-            form_name="Fictional \ud800 form",
-            names_source=NamesOnly(REQUESTED),
-        )
+        _build(fm, form_pdf, "21-526EZ", NamesOnly(REQUESTED))[0]
 
 
 # ---------------- Defense Part B, B4: empty answers and a placement cap ------
