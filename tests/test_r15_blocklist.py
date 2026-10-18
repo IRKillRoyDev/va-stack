@@ -175,7 +175,8 @@ def test_docs_state_the_one_gap_rule_consistently():
     doc = " ".join((bl.__doc__ or "").split())
     for text in (readme, safety, doc):
         assert "line breaks included" in text, text[:200]
-        assert "eight punctuation" in text and "letters" in text
+        assert "any amount of punctuation" in text and "letters" in text
+        assert "eight punctuation" not in text  # round 17 (G10): no cap
         assert "one line break" not in text
         assert "on one line" not in text
     assert "0001a2345a6789" in readme and "0001a2345a6789" in doc
@@ -183,7 +184,8 @@ def test_docs_state_the_one_gap_rule_consistently():
 
 def test_documented_limits_are_the_real_limits():
     assert bl.blocked_value("0001a2345a6789") is None
-    assert bl.blocked_value("0001\n.........\n2345\n.........\n6789") is None
+    # Round 17 (G10): nine marks per gap are caught too.
+    assert bl.blocked_value("0001\n.........\n2345\n.........\n6789") is not None
 
 
 # ---------------- MED: 100k inputs ----------------
@@ -216,7 +218,7 @@ def test_med_100k_inputs_fast(name):
     ):
         t0 = time.perf_counter()
         fn(s)
-        assert time.perf_counter() - t0 < 3.0, name
+        assert time.perf_counter() - t0 < 1.0, name
 
 
 @pytest.mark.parametrize("prefix", ["dc-list", "NDC-rep", "CPT-list", "dollar-rep"])

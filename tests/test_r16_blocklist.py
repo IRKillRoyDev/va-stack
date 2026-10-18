@@ -499,4 +499,4 @@ def test_timing_100k_inputs_fast(name):
     ):
         t0 = time.perf_counter()
         fn(s)
-        assert time.perf_counter() - t0 < 3.0, name
+        assert time.perf_counter() - t0 < 1.0, name
