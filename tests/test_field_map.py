@@ -368,6 +368,7 @@ def test_valid_outbound_request(fm, sent_):
                 {"width": LETTER[0], "height": LETTER[1]},
                 {"width": LETTER[0], "height": LETTER[1]},
             ],
+            "fields": [],
         },
         "data_points": sorted(REQUESTED),
     }
@@ -447,7 +448,6 @@ def test_outbound_accepts_real_form_ids(fm, form_pdf, form_id):
         "21 526EZ",
         "VA21-0781",
         "va 21-0781",
-        "VA 21-0781",
         "21-526EZ ",
         "fake@x.test",
     ],

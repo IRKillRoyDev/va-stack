@@ -142,7 +142,14 @@ def test_request_has_exactly_the_closed_fields(fm, tmp_path):
     prep = _prepare(fm, _fillable(tmp_path / "f.pdf"))
     payload, data = _released(prep)
     assert set(payload) == {"schema_version", "kind", "form", "data_points"}
-    assert set(payload["form"]) == {"id", "name", "sha256", "page_count", "page_sizes"}
+    assert set(payload["form"]) == {
+        "id",
+        "name",
+        "sha256",
+        "page_count",
+        "page_sizes",
+        "fields",
+    }
     assert payload["form"]["id"] == "21-526EZ"
     assert payload["form"]["name"] == FORMS["21-526EZ"]["title"]
     assert payload["data_points"] == NAMES
@@ -161,8 +168,6 @@ def test_every_catalog_form_id_is_accepted(fm, tmp_path, form_id):
 @pytest.mark.parametrize(
     "form_id",
     [
-        "21-0781",
-        "VA 21-0781",
         "JANE-FAKENAME",
         "21-FAKENAME",
         "123-45-6789",
@@ -288,7 +293,7 @@ def test_schema_form_id_and_name_fit_every_catalog_form(fm):
         assert re.fullmatch(form["id"]["pattern"].strip("^$"), form_id)
         assert re.fullmatch(form["name"]["pattern"].strip("^$"), entry["title"])
         assert len(entry["title"]) <= form["name"]["maxLength"]
-    assert "VA " not in form["id"]["pattern"]
+    assert "(VA )?" in form["id"]["pattern"]  # forms outside the catalog (Step A)
 
 
 @pytest.mark.parametrize(

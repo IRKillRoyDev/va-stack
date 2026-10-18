@@ -161,6 +161,8 @@ def test_trust_doc_states_what_a_field_map_request_sends():
         "page sizes",
         "SHA-256",
         "filled-in answers",
+        "names, types and positions of the form's fields, never what is in them",
+        "forms not in that list are sent with no title",
         "metadata",
         "earlier versions",
         "scripts",
