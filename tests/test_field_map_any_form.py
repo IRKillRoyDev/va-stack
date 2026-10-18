@@ -338,6 +338,7 @@ def test_field_list_never_reads_values_or_appearances(fm):
 def test_field_names_get_the_label_checks(fm, tmp_path, bad):
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import NameObject, TextStringObject
+    import json
 
     pdf = _form(tmp_path / "f.pdf")
     writer = PdfWriter(clone_from=PdfReader(str(pdf)))
@@ -347,9 +348,16 @@ def test_field_names_get_the_label_checks(fm, tmp_path, bad):
             annot[NameObject("/T")] = TextStringObject(bad)
     with open(pdf, "wb") as fh:
         writer.write(fh)
-    with pytest.raises(fm.FieldMapError) as err:
-        _prepare(fm, pdf)
-    assert "Fakename" not in str(err.value) and "123-45-6789" not in str(err.value)
+    # Round 18: identifier-shaped /T is gated — either refused or replaced with
+    # a safe placeholder that never carries the identifier into the request.
+    try:
+        pr = _prepare(fm, pdf)
+    except fm.FieldMapError as err:
+        assert "Fakename" not in str(err) and "123-45-6789" not in str(err)
+        return
+    wire = json.dumps(pr.request)
+    assert bad not in wire
+    assert "Fakename" not in wire and "123-45-6789" not in wire
 
 
 def test_every_bundled_va_field_name_passes_the_field_name_check(fm):

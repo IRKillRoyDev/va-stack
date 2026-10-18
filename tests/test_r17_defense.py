@@ -411,7 +411,7 @@ def test_callers_have_no_own_identifier_patterns():
 
 @pytest.mark.skipif(not HAS_SHARED, reason="shared detector not present")
 def test_n_lines_is_stated():
-    assert detect.N_LINES == 4
+    assert detect.N_LINES == 6
 
 
 # ---------------------------------------------------------------------------
@@ -494,26 +494,30 @@ def test_negative_not_blocked_or_redacted(text):
     assert not blocked(text) and not redacted(text), (text, ls.redact(text))
 
 
-OVER_BLOCK_BASELINE = [
-    # Round 17 over-blocks vs the previous pane (form already blocked them):
-    "dose 100 1000 mg",
-    "flexion 120 1300",
+# Round 17 pane-negatives that default-block still catches (honest delta).
+OVER_BLOCK_STILL = [
     "250-5000 ref",
-    "LDL 130-1600",
-    "range 120.1300 units",
     "555 010 0199",
     "1,250,000",
     "ref 555-123-4567",
 ]
+# Round 18 clinical/measurement allowlist frees these former over-blocks.
+OVER_BLOCK_FREED = [
+    "dose 100 1000 mg",
+    "flexion 120 1300",
+    "LDL 130-1600",
+    "range 120.1300 units",
+]
+OVER_BLOCK_BASELINE = OVER_BLOCK_STILL + OVER_BLOCK_FREED
 
 
 def test_over_block_delta_reported():
-    """Honest delta: how many of the old pane-negatives are now blocked."""
-    delta = [s for s in OVER_BLOCK_BASELINE if blocked(s) and redacted(s)]
-    # Every one of them is closed deliberately by equality; report the count.
-    assert len(delta) == len(OVER_BLOCK_BASELINE), delta
-    # And none of the true negatives above is among them.
-    assert not any(s in NEGATIVES for s in delta)
+    """Honest delta: still-blocked vs freed by the clinical allowlist."""
+    still = [s for s in OVER_BLOCK_STILL if blocked(s) and redacted(s)]
+    freed = [s for s in OVER_BLOCK_FREED if not blocked(s) and not redacted(s)]
+    assert still == OVER_BLOCK_STILL, still
+    assert freed == OVER_BLOCK_FREED, freed
+    assert not any(s in NEGATIVES for s in still)
 
 
 # ---------------------------------------------------------------------------
