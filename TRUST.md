@@ -83,16 +83,19 @@ Qt, the other packages or your computer's system do on their own.
 
 ## Blank forms for your AI bot
 
-For a form without fillable fields, a later version can ask your AI bot
-where each answer goes on the page. The code for this is in
-`scripts/field_map.py`; it is not used by any window yet. When it is used:
+For any VA form, a later version can ask your AI bot where each answer goes
+on the page. The code for this is in `scripts/field_map.py`; it is not used
+by any window yet. When it is used:
 
-- **It shows you what will leave, and gives it to your AI bot only after you
-  answer yes.** Nothing leaves before that, and a no leaves nothing.
-- **What leaves:** a sanitized copy of the blank form, its form number and
-  title from the program's own list of VA forms, its page count and page
-  sizes, the SHA-256 hash of that exact copy, and the names of your data
-  points, never their values (for example `ssn`, never the number).
+- **It shows you exactly what will leave, and gives it to your AI bot only
+  after you answer yes.** Nothing leaves before that, and a no leaves
+  nothing.
+- **What leaves:** a sanitized copy of the blank form; its form number; its
+  title, for forms in the program's own list of VA forms (forms not in that
+  list are sent with no title); the names, types and positions of the
+  form's fields, never what is in them; its page count and page sizes; the
+  SHA-256 hash of that exact copy; and the names of your data points, never
+  their values (for example `ssn`, never the number).
 - **The copy is cleaned first:** filled-in answers, metadata (such as the
   author or title), earlier versions saved inside the file, scripts,
   attachments, comments and links are removed. The copy is checked again
@@ -106,8 +109,8 @@ where each answer goes on the page. The code for this is in
 - **Your data-point values** stay in the encrypted vault. The access log
   keeps only counts and keyed hashes of the names, never the names or values.
 
-This is checked by `tests/test_field_map_send.py` and
-`tests/test_vault_data_points.py`.
+This is checked by `tests/test_field_map_send.py`,
+`tests/test_field_map_any_form.py` and `tests/test_vault_data_points.py`.
 
 ## What it never does
 

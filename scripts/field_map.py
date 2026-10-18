@@ -176,9 +176,14 @@ MIN_SIDE = 4.0  # points; a smaller box cannot hold a mark or a letter
 LABEL_MAX, LABEL_WORDS = 60, 12  # "Date you were released from active duty"
 PAGE_SIDE_MIN, PAGE_SIDE_MAX = 1, 20000  # whole points
 FORM_ID_DIGITS = 8  # a form number never needs more digits than this
+MAX_FORM_FIELDS = 2000  # widgets listed for one form (21P-534EZ has about 640)
+FIELD_NAME_MAX = 200
+# How a form field is drawn, from its /FT and /Ff flags (PDF 32000 12.7.4).
+FIELD_TYPES = ("text", "checkbox", "radio", "button", "choice", "signature")
 
 REQUEST_KEYS = frozenset({"schema_version", "kind", "form", "data_points"})
-FORM_KEYS = frozenset({"id", "name", "sha256", "page_count", "page_sizes"})
+FORM_KEYS = frozenset({"id", "name", "sha256", "page_count", "page_sizes", "fields"})
+FORM_FIELD_KEYS = frozenset({"name", "type", "page", "rect"})
 SIZE_KEYS = frozenset({"width", "height"})
 MAP_KEYS = frozenset({"schema_version", "kind", "form_sha256", "fields", "missing"})
 FIELD_KEYS = frozenset(
@@ -190,6 +195,11 @@ _TEXT = re.compile(r"[A-Za-z][A-Za-z0-9 ().,'/&:-]*")
 # The shape of a catalog form number: "21-526EZ", "20-0995", "21P-534EZ",
 # "10182". The id must also be a key of the forms catalog.
 _FORM_ID = re.compile(r"(?:[0-9]{2}[A-Z]{0,2}-)?[0-9]{3,5}[A-Z]{0,3}")
+# Any other VA form: "VA 21-0781", "21-4138". ASCII classes only, matched
+# after identifier_blocklist._clean, so other scripts' digits never pass.
+_ANY_FORM_ID = re.compile(r"(?:VA )?[0-9]{2}-[0-9]{3,5}[A-Z]{0,3}")
+# A form field's own name, as VA forms write it: "F[0].#subform[10].SSN1[0]".
+_FIELD_NAME = re.compile(r"[A-Za-z0-9_.#\[\]\\-]+(?: [A-Za-z0-9_.#\[\]\\-]+)*")
 _DATEISH = re.compile(
     r"\d{1,2}\s*[/.-]\s*\d{1,2}"
     r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*\d",
@@ -243,6 +253,8 @@ def form_catalog() -> dict[str, str]:
 @functools.lru_cache(maxsize=8)
 def _template(form_id: str):
     """The bundled blank form's page text and file hash, or None."""
+    if form_id not in _forms():
+        return None
     path = _forms()[form_id]["template"]
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -329,27 +341,90 @@ def check_label(label, where: str = "$.label") -> str:
     return _check_text(label, where, LABEL_MAX, LABEL_WORDS)
 
 
+def _clean_form_id(form_id) -> str:
+    """The form id as it would be sent: identifier_blocklist._clean applied."""
+    if type(form_id) is not str or not form_id or len(form_id) > 32:
+        raise FieldMapError("$.form.id: must be a VA form number")
+    return identifier_blocklist._clean(form_id)
+
+
 def _check_form_id(form_id) -> str:
-    if type(form_id) is not str or form_id not in _forms():
+    if type(form_id) is not str or identifier_blocklist._clean(form_id) != form_id:
+        raise FieldMapError("$.form.id: must be a VA form number in plain ASCII")
+    if form_id in _forms():
+        shape = _FORM_ID
+    elif _ANY_FORM_ID.fullmatch(form_id):
+        shape = _ANY_FORM_ID
+    else:
         raise FieldMapError(
-            "$.form.id: not a form in the forms catalog"
-            " (skills/proposed-issues/forms.json)"
+            "$.form.id: not in the forms catalog"
+            " (skills/proposed-issues/forms.json) and not shaped like a form"
+            " number"
         )
-    if not _FORM_ID.fullmatch(form_id) or (
+    if not shape.fullmatch(form_id) or (
         sum(ch.isdigit() for ch in form_id) > FORM_ID_DIGITS
     ):
         raise FieldMapError("$.form.id: not shaped like a form number")
-    if identifier_blocklist.blocked_value(form_id) is not None or (
-        _labeled_name(form_id)
-    ):
+    # blocked_value() calls the real form numbers 20-10206 and 21-10210 BANK;
+    # outside the catalog the closed shape (at most 7 digits, NN-NNNNN) is
+    # the guard, plus the name check.
+    blocked = shape is _FORM_ID and identifier_blocklist.blocked_value(form_id)
+    if blocked or _labeled_name(form_id):
         raise FieldMapError("$.form.id: looks like an identifier value or a name")
     return form_id
 
 
-def _check_form_name(form_id: str, name) -> str:
+def _check_form_name(form_id: str, name):
+    if form_id not in _forms():
+        if name is not None:
+            raise FieldMapError("$.form.name: a form outside the catalog has no title")
+        return None
     if type(name) is not str or name != _forms()[form_id]["title"]:
         raise FieldMapError("$.form.name: must be the catalog title of $.form.id")
     return name
+
+
+def check_field_name(name, where: str = "$.form.fields[].name") -> str:
+    """Return a form field's name if it passes the label checks, else raise.
+
+    A field name is the form maker's own text ("F[0].#subform[10].SSN1[0]"),
+    so it may hold letters, digits and . _ # [ ] \\ - and single spaces, up to
+    FIELD_NAME_MAX characters, and it must not look like an identifier value
+    (blocked_value) or a labeled name (the label checks). Never echoed.
+    When to use: on every field name before it is listed in a request.
+    """
+    if type(name) is not str or not 1 <= len(name) <= FIELD_NAME_MAX:
+        raise FieldMapError(f"{where}: must be a short field name")
+    if not _FIELD_NAME.fullmatch(name):
+        raise FieldMapError(f"{where}: has characters a field name does not need")
+    if identifier_blocklist.blocked_value(name) is not None:
+        raise FieldMapError(f"{where}: looks like an identifier value")
+    if _labeled_name(name):
+        raise FieldMapError(f"{where}: looks like a person's name")
+    return name
+
+
+def _check_form_fields(fields, sizes: list) -> None:
+    if not isinstance(fields, list) or len(fields) > MAX_FORM_FIELDS:
+        raise FieldMapError("$.form.fields: must be a list of at most the cap")
+    for k, field in enumerate(fields):
+        where = f"$.form.fields[{k}]"
+        _keys(field, FORM_FIELD_KEYS, where, FORM_FIELD_KEYS)
+        check_field_name(field["name"], f"{where}.name")
+        if field["type"] not in FIELD_TYPES or type(field["type"]) is not str:
+            raise FieldMapError(f"{where}.type: not a known field type")
+        _whole(field["page"], f"{where}.page")
+        if not 1 <= field["page"] <= len(sizes):
+            raise FieldMapError(f"{where}.page: not in the form")
+        rect = field["rect"]
+        if not isinstance(rect, list) or len(rect) != 4:
+            raise FieldMapError(f"{where}.rect: must be four whole numbers")
+        for v in rect:
+            _whole(v, f"{where}.rect")
+        size = sizes[field["page"] - 1]
+        x0, y0, x1, y1 = rect
+        if not (0 <= x0 <= x1 <= size["width"] and 0 <= y0 <= y1 <= size["height"]):
+            raise FieldMapError(f"{where}.rect: inverted or off the displayed page")
 
 
 def _names(raw, where: str) -> list[str]:
@@ -386,6 +461,7 @@ def _check_request(payload) -> dict:
     _check_form_name(form["id"], form["name"])
     if form["page_count"] != len(sizes):
         raise FieldMapError("$.form.page_count: does not match page_sizes")
+    _check_form_fields(form["fields"], sizes)
     if not _names(payload["data_points"], "$.data_points"):
         raise FieldMapError("$.data_points: none")
     return payload
@@ -448,6 +524,106 @@ def to_pdf_rect(rect, *, rotation, box) -> list[float]:
         corners.append((u + llx, v + lly))
     (u0, v0), (u1, v1) = corners
     return [min(u0, u1), min(v0, v1), max(u0, u1), max(v0, v1)]
+
+
+def to_displayed_rect(rect, *, rotation, box) -> list[int]:
+    """Map a PDF user-space rect to the page as displayed, in whole points.
+
+    The inverse of to_pdf_rect(): rect is [x0, y0, x1, y1] in the page's own
+    coordinates, rotation its /Rotate, box its crop box. Lower edges are
+    rounded down and upper edges up, then clamped to the displayed page.
+    When to use: to list a widget's box in a request (_form_fields).
+    """
+    rot = _rotation(rotation)
+    llx, lly, urx, ury = (float(v) for v in box)
+    width, height = urx - llx, ury - lly
+    corners = []
+    for u, v in ((rect[0], rect[1]), (rect[2], rect[3])):
+        u, v = float(u) - llx, float(v) - lly
+        if rot == 0:
+            x, y = u, v
+        elif rot == 90:
+            x, y = v, width - u
+        elif rot == 180:
+            x, y = width - u, height - v
+        else:
+            x, y = height - v, u
+        corners.append((x, y))
+    (a0, b0), (a1, b1) = corners
+    w, h = (height, width) if rot in (90, 270) else (width, height)
+    w, h = math.ceil(w), math.ceil(h)
+    x0 = min(max(math.floor(min(a0, a1)), 0), w)
+    y0 = min(max(math.floor(min(b0, b1)), 0), h)
+    x1 = min(max(math.ceil(max(a0, a1)), x0), w)
+    y1 = min(max(math.ceil(max(b0, b1)), y0), h)
+    return [x0, y0, x1, y1]
+
+
+_FT = {"/Tx": "text", "/Ch": "choice", "/Sig": "signature"}
+_RADIO, _PUSHBUTTON = 1 << 15, 1 << 16  # /Ff bits 16 and 17
+
+
+def _form_fields(reader: PdfReader) -> tuple[list[dict], int]:
+    """(field list, widgets left out for having no name) of the original form.
+
+    Reads only each widget's /Subtype, /T, /FT, /Ff, /Rect and /Parent chain,
+    never a value, default value or appearance, so a filled form gives the
+    same list as its blank version. One entry per widget (a radio group with
+    two buttons lists two), in page order; every name passes
+    check_field_name().
+    """
+    out: list[dict] = []
+    unnamed = 0
+    for n, page in enumerate(reader.pages, 1):
+        annots = page.get("/Annots")
+        annots = annots.get_object() if annots is not None else []
+        rotation = int(page.rotation)
+        box = [float(v) for v in page.cropbox]
+        for ref in annots or []:
+            annot = ref.get_object()
+            if not isinstance(annot, DictionaryObject):
+                continue
+            if annot.get("/Subtype") != "/Widget":
+                continue
+            parts, ft, ff, node, depth = [], None, None, annot, 0
+            while isinstance(node, DictionaryObject) and depth < 32:
+                if "/T" in node:
+                    parts.append(str(node["/T"]))
+                if ft is None and "/FT" in node:
+                    ft = str(node["/FT"])
+                if ff is None and "/Ff" in node:
+                    ff = int(node["/Ff"])
+                parent = node.get("/Parent")
+                node = parent.get_object() if parent is not None else None
+                depth += 1
+            name = ".".join(reversed(parts))
+            if not name:
+                unnamed += 1
+                continue
+            if ft == "/Btn":
+                flags = ff or 0
+                kind = (
+                    "button"
+                    if flags & _PUSHBUTTON
+                    else "radio"
+                    if flags & _RADIO
+                    else "checkbox"
+                )
+            else:
+                kind = _FT.get(ft or "", "text")
+            check_field_name(name, f"form field {len(out) + unnamed + 1}")
+            rect = [float(v) for v in annot["/Rect"]]
+            out.append(
+                {
+                    "name": name,
+                    "type": kind,
+                    "page": n,
+                    "rect": to_displayed_rect(rect, rotation=rotation, box=box),
+                }
+            )
+            if len(out) > MAX_FORM_FIELDS:
+                raise FieldMapError("form: too many form fields")
+    return out, unnamed
 
 
 def _displayed_size(page) -> dict:
@@ -719,10 +895,12 @@ class PreparedRequest:
         "_confirm",
         "_answer",
         "_released",
+        "_fields_json",
     )
 
     def __init__(self, payload, data, *, flat, warnings, confirm):
         self._payload = payload
+        self._fields_json = json.dumps(payload["form"]["fields"], sort_keys=True)
         self._bytes = data
         self._flat = flat
         self._warnings = tuple(warnings)
@@ -751,15 +929,32 @@ class PreparedRequest:
         return copy.deepcopy(self._payload)
 
     def prompt_text(self) -> str:
-        """The consent text: what leaves, what never does, and the warnings."""
+        """The consent text: a summary, then exactly what will be sent.
+
+        The payload is shown as the JSON that leaves (form id, title or none,
+        field list, page sizes, data-point names and hash), followed by the
+        size and hash of the sanitized copy, the warnings and, when needed,
+        the blank-form question.
+        """
         form = self._payload["form"]
+        if form["name"] is None:
+            title = "not in the program's list of VA forms, so no title is sent"
+        else:
+            title = form["name"]
         lines = [
             CONSENT_PROMPT,
             "",
-            f"Form: {form['id']} ({form['name']})",
+            f"Form: {form['id']} ({title})",
             f"Pages: {form['page_count']}",
-            f"SHA-256 of the exact copy that leaves: {form['sha256']}",
+            f"Form fields: {len(form['fields'])} (name, type, page and box only;"
+            " never what is typed in them)",
             f"Data-point names: {', '.join(self._payload['data_points'])}",
+            f"SHA-256 of the exact copy that leaves: {form['sha256']}",
+            "",
+            "What will be sent, exactly:",
+            json.dumps(self._payload, indent=2, ensure_ascii=True),
+            f"plus the sanitized copy of the blank form: {len(self._bytes)} bytes"
+            f" with SHA-256 {form['sha256']}.",
         ]
         if self._warnings:
             lines.append("Warnings:")
@@ -801,6 +996,9 @@ class PreparedRequest:
             raise FieldMapError("consent: the user has not confirmed the form is blank")
         if self._released:
             raise FieldMapError("consent: this request was already released")
+        fields = json.dumps(self._payload["form"]["fields"], sort_keys=True)
+        if fields != self._fields_json:
+            raise FieldMapError("consent: the field list changed after it was shown")
         check_outbound(self._payload, self._bytes)
         self._released = True
         return copy.deepcopy(self._payload), self._bytes
@@ -824,11 +1022,14 @@ def prepare_request(
     names = _names(list(names_source.data_point_names(bot_id)), "$.data_points")
     if not names:
         raise FieldMapError("$.data_points: none")
-    _check_form_id(form_id)
+    form_id = _check_form_id(_clean_form_id(form_id))
     original = Path(form_pdf).read_bytes()
     reader = _reader(original)
     try:
         flat = not reader.get_fields()
+        fields, unnamed = _form_fields(reader)
+    except FieldMapError:
+        raise
     except Exception as exc:
         raise FieldMapError("form: not a readable PDF") from exc
     clean = sanitize_blank_form(original)
@@ -838,10 +1039,11 @@ def prepare_request(
         "kind": "field_map_request",
         "form": {
             "id": form_id,
-            "name": _forms()[form_id]["title"],
+            "name": _forms()[form_id]["title"] if form_id in _forms() else None,
             "sha256": hashlib.sha256(clean).hexdigest(),
             "page_count": len(sizes),
             "page_sizes": sizes,
+            "fields": fields,
         },
         "data_points": sorted(names),
     }
@@ -849,6 +1051,8 @@ def prepare_request(
     warnings, confirm = _confirm_text(
         clean, form_id, hashlib.sha256(original).hexdigest()
     )
+    if unnamed:
+        warnings.append(f"{unnamed} form fields have no name and were left out")
     return PreparedRequest(
         payload, clean, flat=flat, warnings=warnings, confirm=confirm
     )
