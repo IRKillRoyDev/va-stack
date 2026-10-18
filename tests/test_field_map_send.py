@@ -549,7 +549,14 @@ def test_page_without_a_text_layer_warns_that_it_was_not_checked(fm, tmp_path):
     c.rect(72, 600, 200, 100, fill=1)
     c.showPage()
     c.save()
-    prep = _prepare(fm, tmp_path / "f.pdf")
+    # Without OCR (skipped here; test_page_ocr.py covers missing and failing).
+    prep = fm.prepare_request(
+        tmp_path / "f.pdf",
+        form_id="21-526EZ",
+        names_source=NamesOnly(NAMES),
+        bot_id=BOT,
+        ocr=False,
+    )
     assert any("page 1" in w and "no text layer" in w for w in prep.warnings)
     assert prep.needs_blank_confirm
     _released(prep)
