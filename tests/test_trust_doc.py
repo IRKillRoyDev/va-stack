@@ -109,6 +109,7 @@ def test_trust_doc_lists_what_the_code_touches():
         "vault.db",
         "vault.db.kdf.json",
         "vault.db.loghead.json",
+        "form requests.jsonl",
         "drafts",
         ".venv",
         "pip",

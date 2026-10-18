@@ -8,6 +8,14 @@ converts; refusing or cancelling writes nothing. It writes with mode "xb"
 and adds -2, -3 when the name is taken, never replacing a file. It never
 changes the original form and never touches the vault. Only fictional
 blank forms are used here. No network.
+
+Map binding: when a request is released, the sha256 of the original form
+bytes and the request id are kept locally in request_ledger ("form
+requests.jsonl" in the app data folder). The request id is the payload's own
+form.sha256 (the hash of the exact sanitized bytes sent), which the map
+answer already carries as form_sha256, so nothing new leaves the machine.
+The converter refuses a map whose id is not the stored entry for this form's
+original hash; the page count and size check stays as a second check.
 """
 
 from __future__ import annotations
@@ -55,6 +63,18 @@ def no_network(monkeypatch):
 
     monkeypatch.setattr(socket, "socket", refuse)
     monkeypatch.setattr(socket, "create_connection", refuse)
+
+
+@pytest.fixture(autouse=True)
+def appdata(monkeypatch, tmp_path):
+    """The app data folder (where the request ledger lives) is a temp folder."""
+    folder = tmp_path / "appdata"
+    monkeypatch.setattr(_load("app_paths"), "data_dir", lambda *a, **k: folder)
+    return folder
+
+
+def _ledger():
+    return _load("request_ledger").Ledger()
 
 
 class _Names:
@@ -122,10 +142,14 @@ def _rotate(path, degrees):
     return path
 
 
-def _request(fm, src):
+def _request(fm, src, *, record=True):
     names = ("approx_date", "condition", "currently_homeless")
     prep = fm.prepare_request(
-        src, form_id="21-0781", names_source=_Names(names), bot_id=BOT
+        src,
+        form_id="21-0781",
+        names_source=_Names(names),
+        bot_id=BOT,
+        ledger=_ledger() if record else None,
     )
     prep.answer(True, blank_confirmed=True)
     return prep.release()[0]
@@ -399,3 +423,165 @@ def test_no_new_dependency(fc):
     third_party = tops - set(sys.stdlib_module_names) - {"__future__"}
     assert third_party <= {"pypdf", "reportlab"}, third_party
     assert "form_convert" in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+
+# ---------------- map binding: the answer must be for the request sent ----------------
+def _no_write_no_ask(fc, src, raw, req, errors=None):
+    errors = errors or (fc.ConvertError,)
+    before = _listing(src.parent)
+    asked = []
+    with pytest.raises(errors):
+        fc.convert(src, raw, req, ask=lambda p: asked.append(p) or True)
+    assert asked == [] and _listing(src.parent) == before
+
+
+def test_a_matching_request_id_is_accepted(fc, case):
+    src, raw, req = case
+    led = _ledger()
+    assert led.request_id(_sha(src)) == req["form"]["sha256"]
+    assert json.loads(raw)["form_sha256"] == req["form"]["sha256"]
+    assert fc.convert(src, raw, req, ask=_yes, ledger=led).fields
+
+
+def test_a_missing_request_id_is_refused(fc, case):
+    src, raw, req = case
+    bad = json.loads(raw)
+    del bad["form_sha256"]
+    _no_write_no_ask(
+        fc, src, json.dumps(bad), req, (fc.ConvertError, fc.field_map.FieldMapError)
+    )
+
+
+def test_a_wrong_request_id_is_refused(fc, case):
+    src, raw, req = case
+    forged = json.loads(json.dumps(req))
+    forged["form"]["sha256"] = "0" * 64
+    bad = json.loads(raw)
+    bad["form_sha256"] = "0" * 64
+    _no_write_no_ask(fc, src, json.dumps(bad), forged)
+
+
+def test_a_map_for_an_older_request_of_the_same_form_is_refused(fc, case):
+    src, raw, req = case
+    newer = _request(fc.field_map, src)
+    assert newer["form"]["sha256"] != req["form"]["sha256"]
+    _no_write_no_ask(fc, src, raw, req)
+    assert fc.convert(src, _map(newer, ENTRIES), newer, ask=_yes).fields
+
+
+def test_a_request_that_was_never_recorded_is_refused(fc, tmp_path):
+    forms = tmp_path / "forms"
+    forms.mkdir()
+    src = _flat_form(forms / "claim form.pdf")
+    req = _request(fc.field_map, src, record=False)
+    _no_write_no_ask(fc, src, _map(req, ENTRIES), req)
+
+
+def test_an_id_belonging_to_another_form_is_refused(fc, case, tmp_path):
+    src, raw, req = case
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    other = other_dir / "other form.pdf"
+    c = canvas.Canvas(str(other), pagesize=(612, 792))
+    c.drawString(72, 740, "Another fictional form, same page size")
+    c.showPage()
+    c.save()
+    other_req = _request(fc.field_map, other)
+    assert other_req["form"]["page_sizes"] == req["form"]["page_sizes"]
+    _no_write_no_ask(fc, src, _map(other_req, ENTRIES), other_req)
+
+
+def test_a_page_size_mismatch_is_refused_even_when_the_id_matches(fc, case):
+    src, raw, req = case
+    bigger = json.loads(json.dumps(req))
+    bigger["form"]["page_sizes"][0] = {"width": 700, "height": 900}
+    assert _ledger().request_id(_sha(src)) == bigger["form"]["sha256"]
+    _no_write_no_ask(fc, src, raw, bigger)
+
+
+def test_a_page_count_mismatch_is_refused_even_when_the_id_matches(fc, case):
+    src, raw, req = case
+    more = json.loads(json.dumps(req))
+    more["form"]["page_sizes"].append(dict(more["form"]["page_sizes"][0]))
+    more["form"]["page_count"] = 2
+    _no_write_no_ask(fc, src, raw, more)
+
+
+def _prep(fm, src, ledger):
+    return fm.prepare_request(
+        src,
+        form_id="21-0781",
+        names_source=_Names(("approx_date", "condition")),
+        bot_id=BOT,
+        ledger=ledger,
+    )
+
+
+def test_the_outbound_payload_is_unchanged_by_the_binding(fc, case, appdata):
+    fm = fc.field_map
+    src = case[0]
+    plain = _prep(fm, src, None)
+    bound = _prep(fm, src, _ledger())
+    for prep in (plain, bound):
+        prep.answer(True, blank_confirmed=True)
+    (p1, b1), (p2, b2) = plain.release(), bound.release()
+    assert set(p1) == set(p2) == {"schema_version", "kind", "form", "data_points"}
+    assert (
+        set(p1["form"])
+        == set(p2["form"])
+        == {
+            "id",
+            "name",
+            "sha256",
+            "page_count",
+            "page_sizes",
+            "fields",
+        }
+    )
+    # The only differing value is the per-run hash of the sanitized copy, which
+    # differs between any two requests (each copy gets a new random /ID).
+    p1["form"].pop("sha256"), p2["form"].pop("sha256")
+    assert p1 == p2 and len(b1) == len(b2)
+    original = _sha(src)
+    for payload, data in ((plain.request, b1), (bound.request, b2)):
+        assert original not in json.dumps(payload)
+        assert original.encode() not in data
+    assert original not in bound.prompt_text()
+
+
+def test_the_ledger_is_written_on_release_only_and_holds_hashes_only(fc, case, appdata):
+    fm = fc.field_map
+    src = case[0]
+    led = _ledger()
+    before = led.path.read_bytes()
+    refused = _prep(fm, src, led)
+    refused.answer(False, blank_confirmed=False)
+    with pytest.raises(fm.FieldMapError):
+        refused.release()
+    unanswered = _prep(fm, src, led)
+    assert led.path.read_bytes() == before
+    unanswered.answer(True, blank_confirmed=True)
+    payload, _ = unanswered.release()
+    assert led.path.parent == appdata
+    assert led.path.name == "form requests.jsonl"
+    last = json.loads(led.path.read_text(encoding="utf-8").splitlines()[-1])
+    assert last == {"form": _sha(src), "request": payload["form"]["sha256"]}
+    assert led.request_id(_sha(src)) == payload["form"]["sha256"]
+    for line in led.path.read_text(encoding="utf-8").splitlines():
+        entry = json.loads(line)
+        assert set(entry) == {"form", "request"}
+        assert all(
+            len(v) == 64 and set(v) <= set("0123456789abcdef") for v in entry.values()
+        )
+
+
+def test_the_ledger_refuses_values_that_are_not_hashes(tmp_path):
+    rl = _load("request_ledger")
+    led = rl.Ledger(tmp_path / "l.jsonl")
+    for bad in ("", "abc", "Z" * 64, "condition", None, 5):
+        with pytest.raises(ValueError):
+            led.record(bad, "a" * 64)
+        with pytest.raises(ValueError):
+            led.record("a" * 64, bad)
+    assert not (tmp_path / "l.jsonl").exists()
+    assert led.request_id("a" * 64) is None
