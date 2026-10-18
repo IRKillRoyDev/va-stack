@@ -78,6 +78,7 @@ def _sibling(name: str):
 
 
 rs = _sibling("review_session")
+safe_path = _sibling("safe_path")
 rv = rs.pi.records_vault
 
 
@@ -918,10 +919,14 @@ def shoot(widget: QWidget, path: Path) -> Path:
         app().processEvents()
         time.sleep(0.02)
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    saved = widget.grab().save(str(path), "PNG")
+    data = QByteArray()
+    buf = QBuffer(data)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    saved = widget.grab().save(buf, "PNG")
+    buf.close()
     if was_hidden:
         widget.hide()
     if not saved:
         raise OSError(f"could not save {path.name}")
-    return path
+    root = safe_path.pin_root(path.parent)  # pinned; O_NOFOLLOW via dir fd
+    return safe_path.write_replace(root, path.name, bytes(data.data()))

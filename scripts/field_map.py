@@ -857,11 +857,88 @@ def _scannable_form_text(text: str) -> bool:
     return bool(re.search(r"\d{3}[-/ ]\d{2}[-/ ]\d{4}|\d{7,}", t))
 
 
+# Content-stream operators that paint text (PDF reference).
+_TEXT_SHOW_OPS = re.compile(rb"Tj|TJ")
+
+
+def _page_content_bytes(page) -> bytes:
+    """Decompressed /Contents bytes for one page, or b''."""
+    contents = page.get("/Contents")
+    if contents is None:
+        return b""
+    chunks: list[bytes] = []
+    try:
+        objs = contents if isinstance(contents, ArrayObject) else [contents]
+        for obj in objs:
+            try:
+                stream = obj.get_object() if hasattr(obj, "get_object") else obj
+                data = stream.get_data() if hasattr(stream, "get_data") else b""
+                if isinstance(data, bytes):
+                    chunks.append(data)
+            except Exception:
+                continue
+    except Exception:
+        return b""
+    return b"".join(chunks)
+
+
+def page_decode_status(page) -> str:
+    """How page text extraction relates to the content stream.
+
+    Returns:
+      'ok' — extract_text returned non-empty text
+      'blank' — no text-showing operators in /Contents (empty page / graphics)
+      'undecodable' — text operators present (or extraction error) but no
+        usable text (missing/unembedded font, no ToUnicode, Type3, glyph-only)
+
+    Shared by sanitize_blank_form and verify_sanitized via form_identifier_hits.
+    """
+    try:
+        text = page.extract_text() or ""
+    except Exception:
+        return "undecodable"
+    raw = _page_content_bytes(page)
+    has_text_ops = bool(raw and _TEXT_SHOW_OPS.search(raw))
+    # Usable text must contain a letter or digit. Glyph-replacement garbage
+    # (U+FFFD / boxes from missing fonts) counts as undecodable.
+    usable = any(ch.isalnum() for ch in text)
+    if usable:
+        return "ok"
+    if has_text_ops:
+        return "undecodable"
+    # Font resources missing while Resources exist and contents look textual.
+    try:
+        resources = page.get("/Resources")
+        if resources is not None:
+            resources = resources.get_object()
+            fonts = resources.get("/Font") if resources else None
+            if has_text_ops and not fonts:
+                return "undecodable"
+    except Exception:
+        if has_text_ops:
+            return "undecodable"
+    return "blank"
+
+
+_UNDECODABLE_MSG = (
+    "form: page text could not be decoded; run OCR offline and confirm "
+    "the form is blank before sending"
+)
+
+
 def form_identifier_hits(data: bytes) -> list[str]:
     """Kinds the shared detector finds in any form string. One function for
-    sanitize_blank_form and verify_sanitized — no second copy of the rules."""
+    sanitize_blank_form and verify_sanitized — no second copy of the rules.
+
+    Includes the synthetic kind 'undecodable' when a page has content-stream
+    text that extract_text cannot recover (fail closed).
+    """
     kinds: set[str] = set()
     detect = local_search.identifier_detect
+    reader = _reader(data)
+    for page in reader.pages:
+        if page_decode_status(page) == "undecodable":
+            kinds.add("undecodable")
     for _where, text in iter_form_strings(data):
         if not _scannable_form_text(text):
             continue
@@ -956,6 +1033,9 @@ def sanitize_blank_form(data: bytes) -> bytes:
         for page in reader.pages:
             for key in [k for k in page if k not in PAGE_KEEP]:
                 del page[key]
+            # Fail closed on undecodable page text (shared page_decode_status).
+            if page_decode_status(page) == "undecodable":
+                raise FieldMapError(_UNDECODABLE_MSG)
             # Drop content streams whose text carries identifiers.
             try:
                 text = page.extract_text() or ""
@@ -1031,7 +1111,10 @@ def verify_sanitized(data: bytes) -> None:
                     raise FieldMapError(
                         "form: the sanitized copy still has a forbidden object"
                     )
-        if form_identifier_hits(data):
+        hits = form_identifier_hits(data)
+        if "undecodable" in hits:
+            raise FieldMapError(_UNDECODABLE_MSG)
+        if hits:
             raise FieldMapError("form: the sanitized copy still has identifier text")
     except FieldMapError:
         raise

@@ -77,6 +77,17 @@ local_search = importlib.util.module_from_spec(_SPEC)
 sys.modules.setdefault("local_search", local_search)
 _SPEC.loader.exec_module(local_search)
 
+safe_path = sys.modules.get("safe_path")
+if safe_path is None:
+    _SPEC = importlib.util.spec_from_file_location(
+        "safe_path", Path(__file__).resolve().parent / "safe_path.py"
+    )
+    safe_path = importlib.util.module_from_spec(_SPEC)
+    sys.modules["safe_path"] = safe_path
+    _SPEC.loader.exec_module(safe_path)
+
+EXPORTS_DIR = "exports"  # default export_head root, inside the vault folder
+
 
 class VaultError(Exception):
     """Base class for vault errors."""
@@ -261,6 +272,8 @@ def _connect(db_path: Path, key: bytearray):
 
     When to use: inside create_vault() and Vault.open() only.
     """
+    if os.path.islink(db_path):
+        raise VaultError("the vault file is a symlink; refusing to open it")
     conn = sqlcipher3.connect(str(db_path), isolation_level=None)
     _require_cipher(conn)
     # Limit (SAFETY.md): this builds an immutable hex copy of the key that
@@ -379,6 +392,11 @@ def create_vault(
     When to use: once, before the first ingest. Zeroizes the password.
     """
     db_path = Path(db_path)
+    try:
+        root = _vault_root(db_path)
+    except VaultError:
+        zeroize(password)
+        raise
     if db_path.exists() or header_path(db_path).exists():
         zeroize(password)
         raise VaultError(f"already exists: {db_path}")
@@ -401,9 +419,34 @@ def create_vault(
         header["mac"] = _header_mac(key, header)
     finally:
         zeroize(key)
-    header_path(db_path).write_text(
-        json.dumps(header, indent=2) + "\n", encoding="utf-8"
-    )
+    try:  # pinned vault folder; O_EXCL | O_NOFOLLOW via dir fd
+        safe_path.write_new(
+            root,
+            header_path(db_path).name,
+            (json.dumps(header, indent=2) + "\n").encode("utf-8"),
+        )
+    except (OSError, ValueError) as exc:
+        raise VaultError(f"could not write the KDF header safely: {exc}") from exc
+
+
+def _vault_root(db_path: Path):
+    """Pin the vault's folder (strict=True) and refuse symlinked vault files.
+
+    When to use: before any write next to the database (the database
+    itself, its KDF header, its log head). Every write re-checks the pin.
+    """
+    db_path = Path(db_path)
+    try:
+        safe_path.check_name(db_path.name)
+        root = safe_path.pin_root(db_path.parent, create=False)
+    except safe_path.SafePathError as exc:
+        raise VaultError(f"the vault location is not allowed: {exc}") from exc
+    sqlite_side = [db_path.name + s for s in ("-journal", "-wal", "-shm")]
+    names = [db_path.name, header_path(db_path).name, head_path(db_path).name]
+    for name in names + sqlite_side:
+        if os.path.islink(root.path / name):
+            raise VaultError("a vault file is a symlink; refusing")
+    return root
 
 
 def hkdf(key: bytearray, info: bytes, length: int = 32) -> bytearray:
@@ -507,6 +550,7 @@ class Vault:
         self._conn = conn
         self._key = key
         self._db_path = Path(db_path)
+        self._root = None  # pinned vault folder, set by open()
         self._bots = (header or {}).get("bots")
         self._log_key = hkdf(key, b"va-stack access-log v1")
         self._snip_key = hkdf(key, b"va-stack snippet-mac v1")
@@ -528,6 +572,7 @@ class Vault:
             if type(consent) is not ConsentGate:
                 raise ConsentRequired("consent to share is required for each unlock")
             consent.consume()
+            root = _vault_root(db_path)
             header = json.loads(header_path(db_path).read_text(encoding="utf-8"))
             _check_kdf_floor(header)
             key = derive_key(password, header)
@@ -546,7 +591,9 @@ class Vault:
             zeroize(key)
             raise VaultError("KDF header was changed or is unsigned; refusing to open")
         conn.executescript(SCHEMA)
-        return cls(conn, key, _new_token(), db_path, header)
+        vault = cls(conn, key, _new_token(), db_path, header)
+        vault._root = root
+        return vault
 
     def _check_open(self) -> None:
         if self._conn is None:
@@ -564,14 +611,14 @@ class Vault:
         return hmac.new(bytes(self._log_key), msg, "sha256").hexdigest()
 
     def _write_head(self, count: int, last: str) -> None:
-        path = head_path(self._db_path)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(
-            json.dumps(
-                {"count": count, "last": last, "mac": self._head_mac(count, last)}
-            )
-        )
-        os.replace(tmp, path)
+        data = json.dumps(
+            {"count": count, "last": last, "mac": self._head_mac(count, last)}
+        ).encode("utf-8")
+        root = self._root if self._root is not None else _vault_root(self._db_path)
+        try:  # temp + replace inside the re-checked pinned vault folder
+            safe_path.write_replace(root, head_path(self._db_path).name, data)
+        except (OSError, ValueError) as exc:
+            raise VaultError(f"could not write the log head safely: {exc}") from exc
 
     def _log(self, bot_id: str, action: str, detail: dict) -> None:
         """Append one HMAC-chained entry and update the MAC'd head."""
@@ -1098,25 +1145,35 @@ class Vault:
             out.append(entry)
         return out
 
-    def export_head(self, dest: Path) -> Path:
+    def export_head(self, dest, *, export_root=None) -> Path:
         """Write a copy of the signed log head for the user to keep elsewhere.
 
         When to use: at the end of a session; keep the file on other media.
         verify_log(external_head=...) then also catches rolling back the
         database and its head file together to before the export.
+
+        export_root is the folder the user picked for exports (resolved and
+        pinned once); it defaults to an "exports" folder next to the vault.
+        dest is a file name or relative path inside it, or an absolute path
+        that resolves inside it; anything else (traversal, an absolute path
+        elsewhere, a symlinked parent that leaves the root) is refused.
         """
         self._check_open()
         row = self._conn.execute(
             "SELECT seq, hash FROM access_log ORDER BY seq DESC LIMIT 1"
         ).fetchone()
         count, last = (row[0], row[1]) if row else (0, GENESIS)
-        dest = Path(dest)
-        dest.write_text(
-            json.dumps(
-                {"count": count, "last": last, "mac": self._head_mac(count, last)}
-            )
-        )
-        return dest
+        data = json.dumps(
+            {"count": count, "last": last, "mac": self._head_mac(count, last)}
+        ).encode("utf-8")
+        if export_root is None:
+            export_root = self._db_path.parent / EXPORTS_DIR
+        try:
+            root = safe_path.pin_root(export_root)
+            folder, name = safe_path.confine(root, dest)
+            return safe_path.write_replace(folder, name, data)
+        except (OSError, ValueError) as exc:
+            raise VaultError(f"head export refused: {exc}") from exc
 
     def _matches_external(self, path: Path) -> bool:
         """True if the exported head is signed and is part of the current chain."""

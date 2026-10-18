@@ -56,6 +56,7 @@ def _load(name):
 
 
 form_fill = _load("form_fill")
+safe_path = _load("safe_path")
 field_map = _load("field_map")
 
 MAX_COPIES = form_fill.MAX_COPIES
@@ -144,22 +145,29 @@ def save_new(folder, stem: str, kind: str, data: bytes, *, protect=()) -> Path:
 
     When a name is taken, "-2", "-3", ... is added before ".pdf". The file is
     opened with mode "xb", which fails if it exists. Paths in protect (the
-    source form) are skipped even if they would be free.
+    source form) are skipped even if they would be free. stem is routed
+    through safe_path so ../, absolute names, and symlink escapes cannot
+    write outside folder.
     """
-    folder = Path(folder)
-    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        root = safe_path.pin_root(folder)
+    except safe_path.SafePathError as exc:
+        raise FillError(f"the save folder is not allowed: {exc}") from exc
     protected = {Path(p).resolve() for p in protect}
     for n in range(1, MAX_COPIES + 1):
         name = f"{stem} {kind}.pdf" if n == 1 else f"{stem} {kind}-{n}.pdf"
-        path = folder / name
-        if path.resolve() in protected:
-            continue
         try:
-            with open(path, "xb") as fh:  # x: fails if the file exists
-                fh.write(data)
+            safe_path.check_name(name)
+        except safe_path.SafePathError as exc:
+            raise FillError("form name is not allowed") from exc
+        if root.path / name in protected:
+            continue
+        try:  # pinned folder re-checked; O_EXCL | O_NOFOLLOW via dir fd
+            return safe_path.write_new(root, name, data)
         except FileExistsError:
             continue
-        return path
+        except safe_path.SafePathError as exc:
+            raise FillError(f"could not save safely: {exc}") from exc
     raise FillError("too many copies of this form in the folder")
 
 
@@ -288,9 +296,13 @@ def fill_form(
     target = Path(completed_dir) if completed_dir is not None else None
     if target is None:
         target = data / COMPLETED_DIR_NAME
-    if target.resolve() == source.parent:
+    try:  # pinned once (strict=True); every write re-checks the pin
+        target = safe_path.pin_root(target)
+    except safe_path.SafePathError as exc:
+        raise FillError(f"the Completed forms folder is not allowed: {exc}") from exc
+    if target.path == source.parent:
         raise FillError("the completed copy is saved apart from the form's folder")
-    if target.resolve() == (data / "drafts").resolve():
+    if target.path == (data / "drafts").resolve():
         raise FillError("the completed copy is never saved with the drafts")
 
     original = source.read_bytes()

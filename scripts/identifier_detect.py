@@ -27,8 +27,9 @@ One pipeline, applied once at this entry:
    The exception guard looks both before and after, same clause.
 4. One gap rule (GAP): digit groups joined by any non-letter non-digit run.
 5. Default-block for qualifying digit shapes (4+ next to a stem/noun, 7+
-   unlabeled) with one clinical/measurement allowlist so dosages, ranges of
-   motion and lab ranges stay free. One exception registry behind one guard.
+   unlabeled) with one clinical/measurement allowlist: a context word alone
+   never clears a number — the value must also be a plausible measurement
+   shape (≤4 digits per run, <7 total). One exception registry behind one guard.
 
 When to use: never directly from a new output or fill path; call
 local_search.redact() to show text and identifier_blocklist.blocked_value()
@@ -1048,15 +1049,44 @@ def _is_ident_stem(word: str) -> bool:
     return bool(low) and not low.isdigit()
 
 
+# Max integer digits in one measurement number (leading zeros count).
+_MEASURE_INT_DIGITS = 4
+
+
+def _measurement_shape(piece: str) -> bool:
+    """True when piece is a plausible measurement, not an ID-length run.
+
+    Shared rule for the clinical allowlist: every digit run has at most
+    _MEASURE_INT_DIGITS digits, total digits stay below MIN_RUN_DIGITS (7),
+    optional decimals / simple range or percent forms only.
+    """
+    if not piece or not any(ch.isdigit() for ch in piece):
+        return False
+    digits = sum(ch.isdigit() for ch in piece)
+    if digits >= MIN_RUN_DIGITS:
+        return False
+    for m in re.finditer(r"\d+", piece):
+        if len(m.group(0)) > _MEASURE_INT_DIGITS:
+            return False
+    # Number / decimal / short range / percent — not arbitrary punctuation.
+    if not re.fullmatch(r"[\d./,\s%-]+", piece):
+        return False
+    return True
+
+
 def _clinical_around(text: str, start: int, end: int) -> bool:
-    """True when a number sits in a clinical/measurement context (allowlist)."""
+    """True when a number is excused as a clinical/measurement value.
+
+    Requires BOTH a context word (SAFE_STEM or unit suffix) AND a plausible
+    measurement shape. A context word alone never clears an ID-length run.
+    """
     piece = text[start:end]
-    # A long slash-separated rating list is exception-abuse, not a measurement.
-    # Slash-separated rating lists are handled by the exception registry,
-    # not the clinical allowlist (so 6+ ratings / "50, 60%" abuse still block).
+    # Slash-separated rating lists are handled by the exception registry.
     if piece.count("/") >= 4 and RATING_WORD.search(
         text[slice(max(0, start - 24), end + 12)]
     ):
+        return False
+    if not _measurement_shape(piece):
         return False
     before = text[slice(max(0, start - 32), start)]
     after = text[slice(end, end + 24)]
@@ -1089,15 +1119,65 @@ def _label_gap(text: str, a: int, b: int) -> bool:
     return False
 
 
+def _ident_stem_before(text: str, start: int) -> tuple[str, int] | None:
+    """Nearest identifier stem before start, walking past filler phrases.
+
+    'Medicare ending in 123456' / 'Member ends in 123456' — skip connecting
+    words (in/as, also state abbrevs) and openers (ending/ends/listed) so the
+    noun before them still attaches. Nouns that are also fillers (member,
+    file) count when they sit immediately before an opener phrase.
+    """
+    chunk = text[slice(max(0, start - 80), start)]
+    matches = list(_WORD_TOKEN.finditer(chunk))
+    if not matches:
+        return None
+
+    def _abs(i: int) -> int:
+        return start - len(chunk) + matches[i].start()
+
+    i = len(matches) - 1
+    # Phrase: <noun> ending|ends|listed [in|as|…] <value>
+    while i >= 0 and matches[i].group(0).lower().rstrip(".") in CONNECTING_WORDS:
+        i -= 1
+    if i >= 0 and matches[i].group(0).lower().rstrip(".") in _OPENERS:
+        i -= 1
+        if i >= 0:
+            word = matches[i].group(0)
+            compact = _compact(word)
+            if len(compact) >= 2 and not word.isdigit():
+                return word, _abs(i)
+    # General walk: skip connectors/articles/openers and pure glue words,
+    # but keep noun-like fillers (file, member, patient, veteran, …) as stems.
+    _GLUE = frozenset(
+        "number num nbr no nos is was are shown reads which "
+        "direct deposit primary s".split()
+    )
+    i = len(matches) - 1
+    while i >= 0:
+        word = matches[i].group(0)
+        low = word.lower().rstrip(".")
+        if (
+            low in CONNECTING_WORDS
+            or low in _OPENERS
+            or low in _ARTICLES
+            or low in _GLUE
+        ):
+            i -= 1
+            continue
+        if _is_ident_stem(word) or (low in FILLER_WORDS and len(_compact(word)) >= 3):
+            # Filler nouns (file/member/…) still identify a labeled value.
+            return word, _abs(i)
+        break
+    return None
+
+
 def _stem_labels(text: str, start: int, end: int) -> bool:
     """True when an identifier stem attaches before or after the value."""
-    for window in (8, 64):
-        lo = max(0, start - window)
-        stem = _stem_at(text, start, False)
-        if stem and _is_ident_stem(stem):
-            idx = text.rfind(stem, lo, start)
-            if idx >= 0 and _label_gap(text, idx + len(stem), start):
-                return True
+    found = _ident_stem_before(text, start)
+    if found:
+        stem, idx = found
+        if start - idx <= 80 and _label_gap(text, idx + len(stem), start):
+            return True
     # After: "(MRN)", "is the SSN", "which is my MRN" — not "paid today".
     after = text[slice(end, end + ATTACH_CHARS)]
     for m in _WORD_TOKEN.finditer(after):

@@ -36,6 +36,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import NameObject, TextStringObject
 from reportlab.pdfgen import canvas
@@ -56,6 +57,7 @@ def _load(name):
 records_vault = _load("records_vault")
 identifier_blocklist = _load("identifier_blocklist")
 app_paths = _load("app_paths")
+safe_path = _load("safe_path")
 local_search = _load("local_search")
 
 DRAFT_STAMP = "DRAFT for your review. Not submitted to VA."
@@ -202,18 +204,25 @@ def _fill_flat(writer, allowed, layout) -> tuple[list[str], list[str]]:
 
 def _write_new(out_dir: Path, stem: str, data: bytes, source: Path) -> Path:
     """Write data to a new file; never replace one. Adds -2, -3, ..."""
-    out_dir.mkdir(parents=True, exist_ok=True)
+    try:  # pinned once (strict=True); every write re-checks the pin
+        root = safe_path.pin_root(out_dir)
+    except safe_path.SafePathError as exc:
+        raise FormFillError(f"the drafts folder is not allowed: {exc}") from exc
+    source_r = Path(source).resolve()
     for n in range(1, MAX_COPIES + 1):
         name = f"{stem}-draft.pdf" if n == 1 else f"{stem}-draft-{n}.pdf"
-        path = out_dir / name
-        if path.resolve() == source:
+        try:
+            safe_path.check_name(name)
+        except safe_path.SafePathError as exc:
+            raise FormFillError("form name is not allowed") from exc
+        if root.path / name == source_r:
             continue
         try:
-            with open(path, "xb") as fh:  # x: fails if the file exists
-                fh.write(data)
+            return safe_path.write_new(root, name, data)
         except FileExistsError:
             continue
-        return path
+        except safe_path.SafePathError as exc:
+            raise FormFillError(f"could not save safely: {exc}") from exc
     raise FormFillError("too many drafts of this form in the folder")
 
 

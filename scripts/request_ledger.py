@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -40,6 +39,7 @@ def _load(name):
 
 
 app_paths = _load("app_paths")
+safe_path = _load("safe_path")
 
 
 def _check(value, what):
@@ -65,11 +65,11 @@ class Ledger:
             },
             sort_keys=True,
         )
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
+        try:  # pinned folder; O_APPEND | O_NOFOLLOW via dir fd, fsync'd
+            root = safe_path.pin_root(self.path.parent)
+            safe_path.append_text(root, self.path.name, line + "\n")
+        except safe_path.SafePathError as exc:
+            raise ValueError(f"ledger path is not allowed: {exc}") from exc
 
     def request_id(self, original_sha256: str) -> str | None:
         """The stored (latest) request id for this form, or None."""
