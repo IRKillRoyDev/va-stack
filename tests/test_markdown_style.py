@@ -4,11 +4,13 @@ CI has no markdownlint, so this checks the parts that are easy to break
 by hand: prose lines up to 80 characters (tables, code blocks, headings
 and front matter are exempt, as in the files' MD013 settings, and a line may
 run on when nothing after column 80 is a space, such as a long URL), every code
-block names a language, and no double blank lines.
+block names a language, no double blank lines, and no bare URLs (MD034: a URL
+in prose sits in <...> or in a [text](url) link).
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = [
     "README.md",
+    "SAFETY.md",
     "TRUST.md",
     "schemas/README.md",
     *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "skills").glob("*/SKILL.md")),
@@ -73,3 +76,32 @@ def test_no_double_blank_lines(path):
         if not code and a == "" and b == ""
     ]
     assert not doubles, f"{path}: double blank lines at {doubles}"
+
+
+# A URL is fine inside <...>, as a link target "](...)" or in `code`.
+_URL = re.compile(r"https?://[^\s<>()`]+")
+
+
+def _bare_urls(line: str) -> list[str]:
+    line = re.sub(r"`[^`]*`", "", line)
+    return [
+        m.group(0)
+        for m in _URL.finditer(line)
+        if line[slice(m.start() - 1, m.start())] != "<"
+        and line[slice(m.start() - 2, m.start())] != "]("
+    ]
+
+
+def test_bare_url_check_catches_a_bare_url():
+    assert _bare_urls("See https://example.test/x for more.")
+    assert _bare_urls("Call us (https://example.test/x).")
+    assert not _bare_urls(
+        "See <https://example.test/x> or [x](https://example.test/x)."
+    )
+    assert not _bare_urls("Run `curl https://example.test/x` first.")
+
+
+@pytest.mark.parametrize("path", DOCS)
+def test_no_bare_urls(path):
+    bare = [n for n, line, code in _body(path) if not code and _bare_urls(line)]
+    assert not bare, f"{path}: bare URLs (MD034) at lines {bare}"

@@ -26,7 +26,7 @@ SCHEMA = ROOT / "schemas" / "field_map.schema.json"
 CATALOG = ROOT / "schemas" / "data_points.json"
 SYNC = ROOT / "tools" / "sync_field_map_enum.py"
 LETTER = (612.0, 792.0)
-CATEGORIES = ["identity", "contact", "service", "banking", "claim"]
+CATEGORIES = ["identity", "contact", "housing", "service", "banking", "claim"]
 NAME_RE = r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*"
 
 
@@ -143,8 +143,15 @@ def _map(request, **over):
                 "data_point": "approx_date",
                 "format": "MM-YYYY",
             },
+            {
+                "page": 1,
+                "rect": [320, 600, 420, 618],
+                "type": "text",
+                "data_point": "ssn",
+                "label": "Social Security Number",
+            },
         ],
-        "missing": ["ssn"],  # the form asks for it; this request did not
+        "missing": ["ssn"],  # mapped, but this request did not hold it
     }
     out.update(over)
     return out
@@ -599,7 +606,37 @@ def test_inbound_optional_label_and_format(fm, request_):
 
 
 def test_inbound_requested_name_the_form_does_not_use_is_fine(fm, request_):
-    m = _map(request_, missing=[])  # benefit requested, not on this form
+    m = _map(request_)  # benefit requested, not on this form
+    assert fm.parse_field_map(_raw(m), request_)["missing"] == ["ssn"]
+
+
+# Lab Coach: missing == the mapped names minus the requested names, exactly.
+def test_missing_is_exactly_mapped_minus_requested(fm, request_):
+    m = _map(request_)
+    m["fields"].append(copy.deepcopy(m["fields"][2]))  # ssn mapped twice
+    m["fields"][3]["rect"] = [320, 560, 420, 578]
+    assert fm.parse_field_map(_raw(m), request_)["missing"] == ["ssn"]
+
+
+def test_mapped_but_unrequested_name_must_be_in_missing(fm, request_):
+    msg = _err(fm, _raw(_map(request_, missing=[])), request_)
+    assert "$.fields[2].data_point" in msg and "missing" in msg, msg
+    assert "ssn" not in msg.replace("$.missing", ""), msg
+
+
+def test_missing_name_that_is_never_mapped_is_an_error(fm, request_):
+    msg = _err(fm, _raw(_map(request_, missing=["ssn", "email"])), request_)
+    assert "$.missing[1]" in msg and "email" not in msg, msg
+
+
+def test_missing_may_not_hold_a_requested_name_even_if_mapped(fm, request_):
+    msg = _err(fm, _raw(_map(request_, missing=["ssn", "condition"])), request_)
+    assert "$.missing[1]" in msg, msg
+
+
+def test_no_missing_when_every_mapped_name_was_requested(fm, request_):
+    m = _map(request_, missing=[])
+    m["fields"].pop()  # drop the ssn field
     assert fm.parse_field_map(_raw(m), request_)["missing"] == []
 
 
@@ -639,7 +676,9 @@ def test_inbound_rejects_unknown_key_at_every_level(fm, request_, path):
         "03/14/2027",
         "Date 2027-05-02",
         "Seen March 14",
-        "The veteran reported ringing in both ears after the blast",
+        "He said his ears ring at night and on the way to the base",  # 14 words
+        "Item one two three four five six seven eight nine ten a b",  # 13 words
+        "Date you were released from active duty 03/14/2027",
         "x" * 61,
         "Name\twith tab",
         "",
@@ -660,6 +699,8 @@ def test_inbound_rejects_value_smuggled_into_label(fm, request_, label):
         "Social Security Number",
         "Date of birth (MM/DD/YYYY)",
         "Item 12a, 13b",
+        "Date you were released from active duty",  # Lab Coach's example
+        "Date you were released from active duty in the Army or Navy",  # 12
     ],
 )
 def test_inbound_accepts_printed_labels_with_item_numbers(fm, request_, label):
@@ -763,6 +804,9 @@ def test_inbound_date_formats_name_the_date_order(fm, request_, fmt):
         (1, {"comb": True, "max_length": 8, "format": "MMDDYYYY"}),
         (1, {"comb": True, "max_length": 6, "format": "MMYYYY"}),
         (1, {"comb": False}),
+        (1, {"max_length": 7}),  # MM-YYYY, exactly its length
+        (1, {"max_length": 10, "format": "MM/DD/YYYY"}),
+        (1, {"max_length": 4, "format": "YYYY"}),
     ],
 )
 def test_inbound_comb_and_max_length_hints(fm, request_, where, extra):
@@ -782,6 +826,10 @@ def test_inbound_comb_and_max_length_hints(fm, request_, where, extra):
         (1, {"comb": True, "max_length": 10, "format": "MM/DD/YYYY"}),
         (1, {"comb": True, "max_length": 7, "format": "MMDDYYYY"}),
         (1, {"comb": True, "max_length": 8}),  # a comb date names its order
+        (1, {"max_length": 6}),  # MM-YYYY is 7 long
+        (1, {"max_length": 8}),  # longer than MM-YYYY is refused too
+        (1, {"max_length": 40, "format": "MM/DD/YYYY"}),
+        (1, {"max_length": 11, "format": "MM/DD/YYYY"}),
     ],
 )
 def test_inbound_rejects_bad_comb_or_max_length(fm, request_, where, extra):
@@ -820,7 +868,6 @@ def test_inbound_type_must_fit_the_data_point(fm, request_):
         lambda m: m.update(kind="field_map_request"),
         lambda m: m.update(schema_version=2),
         lambda m: m.update(missing=["ssn", "ssn"]),
-        lambda m: m.update(fields=[]),
         lambda m: m.update(missing="ssn"),
         lambda m: m.pop("missing"),
         lambda m: m.pop("fields"),
@@ -838,8 +885,7 @@ def test_inbound_rejects_oversize_lists(fm, request_):
     m = _map(request_, fields=[copy.deepcopy(one) for _ in range(fm.MAX_FIELDS + 1)])
     with pytest.raises(fm.FieldMapError):
         fm.parse_field_map(_raw(m), request_)
-    m = _map(request_, fields=[copy.deepcopy(one) for _ in range(fm.MAX_FIELDS)])
-    m["fields"][1] = _map(request_)["fields"][1]
+    m = _full_map(request_, fm, fm.MAX_FIELDS)
     assert len(fm.parse_field_map(_raw(m), request_)["fields"]) == fm.MAX_FIELDS
     m = _map(request_, missing=["ssn"] * (fm.MAX_NAMES + 1))
     with pytest.raises(fm.FieldMapError):
@@ -1030,3 +1076,201 @@ def test_schema_is_documented_as_not_wired_up():
     assert "data_points.json" in doc and "tools/sync_field_map_enum.py" in doc
     for category in CATEGORIES:
         assert f"`{category}`" in doc, category
+
+
+# ---------------- pre-part-2: catalog additions (Lab Coach answer 4) ----------
+FORWARDING = {
+    "forwarding_address": "text",
+    "forwarding_street": "text",
+    "forwarding_unit": "text",
+    "forwarding_city": "text",
+    "forwarding_state": "text",
+    "forwarding_zip": "text",
+    "forwarding_country": "text",
+    "forwarding_address_type": "choice",
+    "forwarding_start_date": "date",
+    "forwarding_end_date": "date",
+}
+HOUSING = {
+    "currently_homeless": "checkbox",
+    "homeless_living_situation": "choice",
+    "homeless_situation_other": "text",
+    "at_risk_of_homelessness": "checkbox",
+    "at_risk_living_situation": "choice",
+    "at_risk_situation_other": "text",
+    "homeless_contact_name": "text",
+    "homeless_contact_phone": "text",
+    "homeless_contact_international_phone": "text",
+}
+
+
+def test_catalog_has_the_forwarding_address_under_contact():
+    by = {e["name"]: e for e in _catalog()["data_points"]}
+    for name, kind in FORWARDING.items():
+        assert by[name] == {"name": name, "category": "contact", "type": kind}
+
+
+def test_catalog_has_a_housing_category_from_the_526ez_homeless_section():
+    by = {e["name"]: e for e in _catalog()["data_points"]}
+    assert [e for e in by.values() if e["category"] == "housing"] == [
+        {"name": n, "category": "housing", "type": t} for n, t in HOUSING.items()
+    ]
+    assert not [n for n in by if "dependent" in n or "spouse" in n]  # not yet
+
+
+def test_new_names_are_in_the_schema_enum(fm):
+    enum = fm.load_schema()["$defs"]["data_point"]["enum"]
+    assert set(FORWARDING) | set(HOUSING) <= set(enum)
+
+
+# ---------------- pre-part-2: meta-schema check, offline (item c) ----------
+def test_schema_passes_the_bundled_draft_2020_12_meta_schema(monkeypatch):
+    import socket
+
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import SchemaError
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("the meta-schema check must not use the network")
+
+    monkeypatch.setattr(socket, "create_connection", no_network)
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    meta = Draft202012Validator.META_SCHEMA
+    assert meta["$id"] == "https://json-schema.org/draft/2020-12/schema"
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    assert schema["$schema"] == meta["$id"]
+    Draft202012Validator.check_schema(schema)
+    broken = copy.deepcopy(schema)
+    broken["$defs"]["field"]["properties"]["page"]["minimum"] = "one"
+    with pytest.raises(SchemaError):
+        Draft202012Validator.check_schema(broken)
+
+
+# ---------------- pre-part-2: date max_length, label words (answers 2, 3) ----
+def test_label_word_cap_is_twelve(fm):
+    assert fm.LABEL_WORDS == 12
+
+
+# ---------------- Defense Part B, B3: strict types ----------------
+class _Str(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda m: m["fields"][0].update(page=1.0),
+        lambda m: m["fields"][0].update(page=True),
+        lambda m: m["fields"][0].update(max_length=9.0),
+        lambda m: m.update(schema_version=1.0),
+        lambda m: m.update(schema_version=True),
+    ],
+)
+def test_b3_whole_numbers_must_be_ints(fm, request_, mutate):
+    m = _map(request_)
+    mutate(m)
+    with pytest.raises(fm.FieldMapError):
+        fm.parse_field_map(_raw(m), request_)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda r: r["form"].update(page_count=float(r["form"]["page_count"])),
+        lambda r: r.update(schema_version=1.0),
+        lambda r: r.update(schema_version=True),
+    ],
+)
+def test_b3_outbound_ints_are_exact(fm, request_, mutate):
+    bad = copy.deepcopy(request_)
+    mutate(bad)
+    with pytest.raises(fm.FieldMapError):
+        fm.check_outbound(bad)
+
+
+def test_b3_str_subclass_is_refused(fm, request_):
+    with pytest.raises(fm.FieldMapError):
+        fm.check_label(_Str("Item 12"))
+    with pytest.raises(fm.FieldMapError):
+        fm.check_name(_Str("condition"))
+    with pytest.raises(fm.FieldMapError):
+        fm.parse_field_map(_Str(_raw(_map(request_))), request_)
+
+
+def test_b3_lone_surrogate_escape_in_json_is_refused(fm, request_):
+    raw = _raw(_map(request_)).replace("Current disability", "Current \\ud800x")
+    assert "\\ud800" in raw  # a JSON escape, valid JSON text
+    with pytest.raises(fm.FieldMapError):
+        fm.parse_field_map(raw, request_)
+
+
+@pytest.mark.parametrize("where", ["end", "label"])
+def test_b3_lone_surrogate_in_text_is_a_field_map_error(fm, request_, where):
+    raw = _raw(_map(request_))
+    if where == "end":
+        raw += "\ud800"
+    else:
+        raw = raw.replace("Current disability", "Current \ud800x")
+    with pytest.raises(fm.FieldMapError) as err:
+        fm.parse_field_map(raw, request_)
+    assert "\ud800" not in str(err.value)
+
+
+def test_b3_lone_surrogate_in_outbound_text_is_a_field_map_error(fm, form_pdf):
+    with pytest.raises(fm.FieldMapError):
+        fm.build_request(
+            form_pdf,
+            form_id="21-526EZ",
+            form_name="Fictional \ud800 form",
+            names_source=NamesOnly(REQUESTED),
+        )
+
+
+# ---------------- Defense Part B, B4: empty answers and a placement cap ------
+def _full_map(request, fm, count):
+    """A valid map with count fields over many names, MAX_PLACEMENTS each."""
+    kinds = {"text": "text", "date": "date", "checkbox": "checkbox", "choice": "text"}
+    fields = []
+    for name in sorted(fm.CATALOG):
+        for k in range(fm.MAX_PLACEMENTS_PER_POINT):
+            if len(fields) == count:
+                break
+            y = 20 + 18 * (len(fields) % 40)
+            fields.append(
+                {
+                    "page": 1 + (len(fields) // 40) % 2,
+                    "rect": [72 + k * 120, y, 180 + k * 120, y + 16],
+                    "type": kinds[fm.CATALOG[name]["type"]],
+                    "data_point": name,
+                }
+            )
+    mapped = {f["data_point"] for f in fields}
+    missing = sorted(mapped - set(request["data_points"]))
+    return _map(request, fields=fields, missing=missing)
+
+
+def test_b4_a_form_that_uses_no_catalog_name_is_an_empty_answer(fm, request_):
+    m = _map(request_, fields=[], missing=[])
+    assert fm.parse_field_map(_raw(m), request_)["fields"] == []
+
+
+def test_b4_empty_fields_cannot_list_missing_names(fm, request_):
+    msg = _err(fm, _raw(_map(request_, fields=[], missing=["ssn"])), request_)
+    assert "$.missing[0]" in msg, msg
+
+
+@pytest.mark.parametrize("count,ok", [(4, True), (5, False)])
+def test_b4_one_data_point_is_placed_at_most_four_times(fm, request_, count, ok):
+    assert fm.MAX_PLACEMENTS_PER_POINT == 4
+    one = _map(request_)["fields"][0]
+    fields = []
+    for k in range(count):
+        f = copy.deepcopy(one)
+        f["rect"] = [72, 100 + 30 * k, 300, 118 + 30 * k]
+        fields.append(f)
+    m = _map(request_, fields=fields, missing=[])
+    if ok:
+        assert len(fm.parse_field_map(_raw(m), request_)["fields"]) == count
+    else:
+        msg = _err(fm, _raw(m), request_)
+        assert "$.fields[4].data_point" in msg, msg
