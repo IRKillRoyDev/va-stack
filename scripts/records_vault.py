@@ -294,6 +294,8 @@ CREATE TABLE IF NOT EXISTS review_draft (
     id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL, ts TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS data_points (
     name TEXT PRIMARY KEY, value TEXT NOT NULL, ts TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS data_point_links (
+    name TEXT NOT NULL, category TEXT NOT NULL, PRIMARY KEY (name, category));
 """
 # A saved-for-later review state larger than this is refused.
 DRAFT_MAX = 1_000_000
@@ -1237,6 +1239,122 @@ class Vault:
             {"count": len(names), "names_mac": self._mac(json.dumps(names))},
         )
         return names
+
+    def _catalog_name(self, name) -> str:
+        if type(name) is not str or name not in _field_map().CATALOG:
+            raise VaultError("data point: not a catalog data-point name")
+        return name
+
+    def get_data_point(self, name: str, bot_id: str) -> str | None:
+        """Return one data point's value, or None when it holds none.
+
+        When to use: when the user asks to see a masked value, or to fill
+        one form field. The log keeps a keyed hash of the name only.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        name = self._catalog_name(name)
+        row = self._conn.execute(
+            "SELECT value FROM data_points WHERE name = ?", (name,)
+        ).fetchone()
+        self._log(bot_id, "data_point_read", {"name_mac": self._mac(name)})
+        return row[0] if row else None
+
+    def data_point_values(self, names, bot_id: str) -> dict[str, str]:
+        """Return {name: value} for the given catalog names that hold one.
+
+        When to use: by the master-data model (all names) and the fill engine
+        (the names a field map uses). The log keeps the count and a keyed
+        hash of the sorted names asked for, never a name or a value.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        asked = sorted({self._catalog_name(n) for n in names})
+        rows = self._conn.execute("SELECT name, value FROM data_points").fetchall()
+        wanted = set(asked)
+        out = {n: v for n, v in rows if n in wanted}
+        self._log(
+            bot_id,
+            "data_point_values",
+            {"count": len(out), "names_mac": self._mac(json.dumps(asked))},
+        )
+        return out
+
+    def delete_data_point(self, name: str, bot_id: str) -> bool:
+        """Delete one data point's value and its links. True if one was held.
+
+        When to use: only after the user confirmed the delete (the
+        master-data model requires confirm=True). Logs a keyed hash only.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        name = self._catalog_name(name)
+        with self._conn:
+            cur = self._conn.execute("DELETE FROM data_points WHERE name = ?", (name,))
+            self._conn.execute("DELETE FROM data_point_links WHERE name = ?", (name,))
+        self._log(bot_id, "data_point_deleted", {"name_mac": self._mac(name)})
+        return cur.rowcount > 0
+
+    def _link_args(self, name, category) -> tuple[str, str]:
+        name = self._catalog_name(name)
+        fm = _field_map()
+        if type(category) is not str or category not in fm.CATEGORIES:
+            raise VaultError("data point link: not a catalog category")
+        if category == fm.CATALOG[name]["category"]:
+            raise VaultError("data point link: that is the data point's own tab")
+        return name, category
+
+    def link_data_point(self, name: str, category: str, bot_id: str) -> None:
+        """Show one stored data point under another catalog category too.
+
+        When to use: by the master-data model. The value is still stored
+        once; this row only says where else it shows. Logs keyed hashes.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        name, category = self._link_args(name, category)
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO data_point_links (name, category) VALUES (?, ?)",
+                (name, category),
+            )
+        self._log(
+            bot_id,
+            "data_point_linked",
+            {"name_mac": self._mac(name), "category_mac": self._mac(category)},
+        )
+
+    def unlink_data_point(self, name: str, category: str, bot_id: str) -> None:
+        """Stop showing a data point under an extra category. Keyed hashes."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        name, category = self._link_args(name, category)
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM data_point_links WHERE name = ? AND category = ?",
+                (name, category),
+            )
+        self._log(
+            bot_id,
+            "data_point_unlinked",
+            {"name_mac": self._mac(name), "category_mac": self._mac(category)},
+        )
+
+    def data_point_links(self, bot_id: str) -> list[tuple[str, str]]:
+        """Return the (name, category) rows saying where else points show.
+
+        When to use: by the master-data model to build its tabs. Logs the
+        count only.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        rows = self._conn.execute(
+            "SELECT name, category FROM data_point_links ORDER BY name, category"
+        ).fetchall()
+        fm = _field_map()
+        out = [(n, c) for n, c in rows if n in fm.CATALOG and c in fm.CATEGORIES]
+        self._log(bot_id, "data_point_links_read", {"count": len(out)})
+        return out
 
     def record_field_map_answer(self, detail: dict, bot_id: str) -> None:
         """Log the user's answer to a field-map consent prompt.

@@ -27,9 +27,11 @@ package-dir = { "" = "scripts" }
 py-modules = [
     "app_paths",
     "field_map",
+    "fill_engine",
     "form_fill",
     "identifier_blocklist",
     "local_search",
+    "master_data",
     "proposed_issues",
     "qt_ui",
     "records_vault",
