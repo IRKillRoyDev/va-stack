@@ -220,6 +220,7 @@ Open a terminal window.
 - `No module named venv` or `ensurepip is not available` (Debian, Ubuntu): run `sudo apt install python3-venv`, then repeat step 4.
 - `pip: command not found`: use `python -m pip` (inside `(.venv)`) or `python3 -m pip` (outside it), as in step 6.
 - The review window does not open: run `sudo apt install python3-tk`, or use the text walk-through with `--cli` (below).
+- `libEGL.so.1: cannot open shared object file` (the PySide6 windows): run `sudo apt install libegl1 libxkbcommon0`, then try again.
 - `(.venv)` is gone: you opened a new window. Run step 3 and step 5 again.
 
 ### Try it with the sample data (optional)
