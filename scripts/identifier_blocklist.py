@@ -12,9 +12,10 @@ splitting camelCase and dropping punctuation, so "S.S.N.", "Veteran_SSN[0]",
 Values are matched with the local_search redaction patterns plus a few more
 (labeled ZIP codes, any run of seven or more digits joined by spaces,
 dots or dashes, and any run of nine or more digits whose groups are split
-by any amount of spaces or tabs on one line plus up to eight punctuation
-characters, or by one line break, e.g. "0001/2345/6789",
-"000, 123, 456, 789", "0001    2345    6789" or "0001 -- / 2345 -- / 6789").
+by one gap each: any amount of whitespace, line breaks included, with up to
+eight punctuation characters among it, e.g. "0001/2345/6789",
+"000, 123, 456, 789", "0001    2345    6789", "0001 -- / 2345 -- / 6789"
+or "0001\n\n2345\n\n6789").
 Digits split by letters ("0001a2345a6789") or by nine or more punctuation
 characters are not caught. The lists lean toward leaving a field blank: a
 blank field is something the user fills in by hand; a wrong fill is a leak.
@@ -160,10 +161,11 @@ _ZIP = re.compile(
 )
 # A digit run may be split by any common separator. Runs that use only
 # space, dot or dash count from 7 digits (as before). Wider runs count from
-# 9 digits: digits joined by one gap, where a gap is any amount of spaces or
-# tabs on one line with up to 8 other non-alphanumeric characters among them
-# ("000, 123, 456, 789", "0001    2345    6789", "0001 -- / 2345 -- / 6789",
-# "0001......2345"), or one line break. Such a run is left alone only when it
+# 9 digits: digits joined by one gap, where a gap is any amount of whitespace
+# (spaces, tabs and line breaks alike) with up to 8 other non-alphanumeric
+# characters among it ("000, 123, 456, 789", "0001    2345    6789",
+# "0001 -- / 2345 -- / 6789", "0001......2345", "0001 \n 2345", "0001,\n2345").
+# Such a run is left alone only when it
 # splits into pieces that are each a known non-identifier: a rating list, a
 # percent, a labeled diagnostic code list, a labeled CPT code list, a labeled
 # dashed NDC, a $ amount, a calendar date or a year. Pieces
@@ -172,14 +174,14 @@ _ZIP = re.compile(
 # capped, so the exceptions cannot carry an account number
 # ("$ 100,123,456,789", "DC 5257/6260/7000/8000").
 _DIGIT_RUN = re.compile(r"(?<!\d)\d(?:[ .-]?\d){6,}(?!\d)")
-_HSPACE = r"[^\S\n\r\v\f\x1c-\x1e\x85\u2028\u2029]"  # whitespace, one line
-_LINE_BREAK = r"(?:\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029])"
 _PUNCT = r"[^\dA-Za-z\s]"
 _PUNCT_MAX = 8
-# Each punctuation mark is followed by its own spaces, so the gap matches in
-# one way only and the search stays linear in the input length.
-_GAP = rf"{_HSPACE}*(?:{_PUNCT}{_HSPACE}*){{0,{_PUNCT_MAX}}}"
-_WIDE_SEP = rf"(?:{_GAP}|{_LINE_BREAK})"
+# The one gap rule, shared with local_search.GAP: whitespace of any kind and
+# length (line breaks included), with up to 8 punctuation marks. Each mark is
+# followed by its own whitespace, so a gap matches in one way only and the
+# search stays linear in the input length.
+_GAP = rf"\s*(?:{_PUNCT}\s*){{0,{_PUNCT_MAX}}}"
+_WIDE_SEP = _GAP
 _WIDE_DIGIT_RUN = re.compile(rf"(?<!\d)\d(?:{_WIDE_SEP}\d){{8,}}(?!\d)")
 _RATING = r"(?:100|[1-9]0)"
 _RATING_LIST = re.compile(rf"{_RATING}(?:/{_RATING}){{2,4}}")  # at most 5
@@ -191,14 +193,18 @@ _PERCENT_AFTER = re.compile(r"\s?(?:%|percent\b)", re.IGNORECASE)
 _DC_LIST = re.compile(r"[5-9]\d{3}(?:[/,]\s?[5-9]\d{3}){0,2}")
 _DC_LABEL = re.compile(r"\b(?:DCs?|diagnostic\s+codes?)\b[\s:#]*$", re.IGNORECASE)
 _AMOUNT = re.compile(r"[1-9]\d{0,2}(?:,\d{3})+(?:\.\d{2})?")
+_DOLLAR = re.compile(r"\$\s*$")
 _AMOUNT_MAX_DIGITS = 10  # whole-dollar digits; "$1,234,567,890" at most
 _DATE = re.compile(
     r"(?:0?[1-9]|1[0-2])[/.-](?:0?[1-9]|[12]\d|3[01])[/.-](?:19|20)\d\d"
     r"|(?:19|20)\d\d-(?:0?[1-9]|1[0-2])-(?:0?[1-9]|[12]\d|3[01])"
 )
 _YEAR = re.compile(r"(?:19|20)\d\d")
-# CPT/HCPCS procedure codes are five characters; at most 3, right after a label.
-_CPT_LIST = re.compile(r"\d{5}(?:(?:\s*[,/]\s*|\s+)\d{5}){0,2}")
+# CPT Category I codes are five digits in 00100-99499 (AMA, "Category I
+# Codes", https://www.ama-assn.org/practice-management/cpt/category-i-codes,
+# checked 2026-10-18); at most 3, right after a label.
+_CPT_CODE = r"(?:00[1-9]\d\d|0[1-9]\d{3}|[1-8]\d{4}|9[0-8]\d{3}|99[0-4]\d\d)"
+_CPT_LIST = re.compile(rf"{_CPT_CODE}(?:(?:\s*[,/]\s*|\s+){_CPT_CODE}){{0,2}}")
 _CPT_LABEL = re.compile(
     r"\b(?:CPT|HCPCS|(?:procedure|visit|billing)\s+codes?)(?:\s+codes?)?[\s:#]*$",
     re.IGNORECASE,
@@ -206,9 +212,24 @@ _CPT_LABEL = re.compile(
 # National Drug Codes in their dashed 10-digit shapes (4-4-2, 5-3-2, 5-4-1)
 # or the 11-digit 5-4-2 billing shape, right after an NDC label. A bare
 # 10/11-digit run is NOT excused: it carries no structure an account lacks.
-_NDC = re.compile(r"\d{4}-\d{4}-\d{2}|\d{5}-\d{3}-\d{2}|\d{5}-\d{4}-\d{1,2}")
+_NDC = re.compile(
+    r"(?!0+-)(?:\d{4}-(?!0+-)\d{4}|\d{5}-(?!0+-)\d{3}|\d{5}-(?!0+-)\d{4})"
+    r"-(?!0+$)\d{1,2}"
+)
 _NDC_LABEL = re.compile(r"\bNDC(?:\s*(?:#|no\.?|number|code))?[\s:#]*$", re.IGNORECASE)
 _LABELED_CODES = frozenset({"cpt", "ndc"})
+# Labels are looked for only this far before a piece, so a long input is not
+# rescanned from its start for every piece (that made "DC 5257/6260/7000 "
+# repeated to 100k characters take tens of seconds). A label farther away
+# than this does not excuse the piece, which is the safe direction.
+_LABEL_WINDOW = 64
+
+
+def _label_before(pattern: re.Pattern[str], text: str, start: int) -> bool:
+    """True when pattern matches right before text[start] (within the window)."""
+    return pattern.search(text, max(0, start - _LABEL_WINDOW), start) is not None
+
+
 _REPEATABLE = frozenset({"date", "year"})  # "seen 03/14/2027, 04/15/2027"
 _MAX_PIECES = 4
 _NOT_AN_ID = re.compile(
@@ -225,21 +246,20 @@ def _piece_kind(text: str, start: int, end: int) -> str | None:
     Labels and words are looked up in the original text around the piece.
     """
     piece = text[start:end]
-    before = text[:start]
     near = text[slice(max(0, start - _RATING_WINDOW), end + _RATING_WINDOW)]
     if _RATING_LIST.fullmatch(piece) and _RATING_WORD.search(near):
         return "rating"  # "rated 10/20/30/40/50"
     if _PERCENT.fullmatch(piece) and _PERCENT_AFTER.match(text, end):
         return "rating"  # "70%"
-    if _DC_LIST.fullmatch(piece) and _DC_LABEL.search(before):
+    if _DC_LIST.fullmatch(piece) and _label_before(_DC_LABEL, text, start):
         return "dc"  # "DC 5260/5003/5010"
-    if _CPT_LIST.fullmatch(piece) and _CPT_LABEL.search(before):
+    if _CPT_LIST.fullmatch(piece) and _label_before(_CPT_LABEL, text, start):
         return "cpt"  # "CPT 99213, 93000"
-    if _NDC.fullmatch(piece) and _NDC_LABEL.search(before):
+    if _NDC.fullmatch(piece) and _label_before(_NDC_LABEL, text, start):
         return "ndc"  # "NDC 0071-0155-23"
     if (
         _AMOUNT.fullmatch(piece)
-        and re.search(r"\$\s*$", before)
+        and _label_before(_DOLLAR, text, start)
         and len(re.sub(r"\D", "", piece.split(".")[0])) <= _AMOUNT_MAX_DIGITS
     ):
         return "amount"  # "$125,000,000", "$12,345,678.00"

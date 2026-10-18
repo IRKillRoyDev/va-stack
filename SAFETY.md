@@ -12,13 +12,14 @@
   when its name or value looks like a Social Security number, address, phone,
   date of birth, service number, VA file number, bank routing or account number,
   or email (`scripts/identifier_blocklist.py`). Values are checked by pattern
-  and can miss things: a number is caught when its digit groups are split by
-  spaces or tabs (any amount, on one line) with up to eight punctuation marks,
-  or by one line break; digits split by letters or by nine or more punctuation
+  and can miss things: a number is caught when its digit groups are split by any
+  amount of whitespace, line breaks included, with up to eight punctuation marks
+  between two groups; digits split by letters or by nine or more punctuation
   marks, and unlabeled numbers of eight digits or fewer split by a slash, comma
   or similar mark (such as `0001/2345`), are not caught. It also leaves some
   ordinary numbers blank (vital-sign and lab runs, bare 11-digit NDCs, generic
-  reference numbers). Check every draft before you use it.
+  reference numbers, and number-only lines that together make nine or more
+  digits). Check every draft before you use it.
 - **Primary sources only.** Every legal statement cites its primary source, fetched in the same session with an "as of" date: 38 CFR (eCFR API), the U.S. Code (govinfo), DoD instructions (official DoD issuances site), or live VA.gov pages. Nothing is cited from memory. If a fetch fails, the bot stops.
 - **No guessing.** If evidence is missing or ambiguous, the bot says so and lists it as a gap.
 - **Crisis support.** If you are a veteran in crisis, or worried about one, contact the Veterans Crisis Line: dial 988, then press 1 (or text 838255, or chat online). Sources, checked 2026-10-16: https://www.veteranscrisisline.net/ and https://www.va.gov/health-care/health-needs-conditions/mental-health/. If you are in immediate danger, call 911.

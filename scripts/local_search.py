@@ -200,15 +200,16 @@ class _NameRule:
 
 _NAME_RULE = _NameRule()
 
-# Labeled service and bank numbers: digit groups may be split by any amount
-# of spaces or tabs on one line with up to 8 other non-alphanumeric
-# characters among them ("000, 123, 456, 789", "0001    2345    6789",
-# "0001 -- / 2345 -- / 6789", "1234|5678"; not letters or line breaks), and a
-# few filler words may sit between the label and the number ("account number
-# is ...", "account ending in ..."). Each punctuation mark is followed by its
-# own spaces, so the gap matches in one way only and stays linear.
-_HSPACE = r"[^\S\n\r\v\f\x1c-\x1e\x85\u2028\u2029]"
-_GROUP_SEP = rf"{_HSPACE}*(?:[^\dA-Za-z\s]{_HSPACE}*){{0,8}}"
+# Labeled service and bank numbers: digit groups may be split by one gap each,
+# the same gap rule as identifier_blocklist: any amount of whitespace (line
+# breaks included) with up to 8 other non-alphanumeric characters among it
+# ("000, 123, 456, 789", "0001    2345    6789", "0001 -- / 2345 -- / 6789",
+# "0001 \n 2345", "1234|5678"; not letters), and a few filler words may sit
+# between the label and the number ("account number is ...", "account ending
+# in ..."). Each punctuation mark is followed by its own whitespace, so the
+# gap matches in one way only and stays linear.
+GAP = r"\s*(?:[^\dA-Za-z\s]\s*){0,8}"
+_GROUP_SEP = GAP
 _FILLER = (
     r"(?:[\s:#.=-]*(?:(?:number|num|nbr|no|is|was)\b\.?"
     r"|(?:ending|ends)(?:\s+(?:in|with))?\b|#)){0,4}"
@@ -308,8 +309,10 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
             r"|Parkway|Pkwy)\b\.?"
             r"(?:,?\s+(?:Apt|Suite|Unit|#)\s*\w+)?"
             r"|\bP\.?\s?O\.?\s*Box\s*\d+"
-            # "RR 2 Box 15"; a bare "RR 16" is a respiratory rate
-            r"|\bRural\s+Route\s*\d+(?:\s+Box\s*\d+)?|\bRR\s*\d+\s+Box\s*\d+",
+            # "RR 2 Box 15", "R.R. 2 Box 5", "RR #2 Box 5"; a bare "RR 16" is a
+            # respiratory rate
+            r"|\bRural\s+Route\s*(?:#\s*)?\d+(?:\s+Box\s*#?\s*\d+)?"
+            r"|\bR\.?\s?R\.?\s*(?:#\s*)?\d+\s+Box\s*#?\s*\d+",
             re.IGNORECASE,
         ),
     ),
