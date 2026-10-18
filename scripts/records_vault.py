@@ -1041,6 +1041,24 @@ class Vault:
             return False
         return count == len(rows) and last == prev
 
+    def check_open(self) -> None:
+        """Raise VaultLocked unless this session is still unlocked.
+
+        When to use: before work that must only run beside an open vault
+        (form_fill.make_draft checks this before it reads the form).
+        """
+        self._check_open()
+
+    def record_form_draft(self, detail: dict, bot_id: str) -> None:
+        """Log that a form draft copy was written (no field values).
+
+        When to use: only from form_fill.make_draft(). detail holds the
+        redacted form file name, the mode, counts and the draft's sha256.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        self._log(bot_id, "form_draft_made", detail)
+
     def close(self) -> None:
         """Zeroize the key, close the database, and lock the session.
 

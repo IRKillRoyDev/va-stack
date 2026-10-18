@@ -1,4 +1,6 @@
 pypdf==5.1.0
+# Draft overlays for flat (non-fillable) PDF forms. BSD licensed, pure Python.
+reportlab==4.5.1
 # Encrypted SQLite (SQLCipher 4). Both packages install the same
 # "sqlcipher3" module with a bundled, statically linked SQLCipher; there is
 # no fallback to plain sqlite3 (records_vault.py refuses to run without it).

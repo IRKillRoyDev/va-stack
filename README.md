@@ -302,6 +302,15 @@ python3 scripts/vault_ui.py records.db --bot-id <id>
 
 Each command shows the consent-to-share notice, then prompts for the password locally. `tests/test_vault.py` covers wrong password, tampered or deleted log entries, no consent, consent every session, missing bot id, no snippet text in the log, key zeroized after close, and no network use.
 
+## Draft forms (review only)
+
+`scripts/form_fill.py` makes a pre-filled DRAFT copy of a PDF form for you to check and finish by hand. It never submits or sends anything, and it has no network code. It runs only while your vault is unlocked, and it writes each draft to the vault's access log (counts and a file hash, no answers).
+
+- Fillable forms (with typing boxes) are filled with pypdf. Flat forms get the text printed on top with reportlab, at positions you give.
+- These are always left blank, whatever the box is called and whatever is typed: Social Security number, address, phone, date of birth, service number, VA file number, and bank routing or account numbers (plus email). The list is in `scripts/identifier_blocklist.py`. Fill those in yourself.
+- Your original form is never changed (it is checked by hash). Each draft is a new file in the `drafts` folder inside your vault folder: `form-draft.pdf`, then `form-draft-2.pdf`, and so on. Nothing is replaced.
+- Drafts are ordinary PDF files, not encrypted. Delete them when you are done.
+
 ## Development and tests (CI)
 
 `.github/workflows/ci.yml` runs on every push, pull request, and manual dispatch. Its steps:
