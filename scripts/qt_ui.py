@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -101,9 +102,15 @@ def ask(parent, title: str, text: str) -> bool:
     return answer == QMessageBox.StandardButton.Yes
 
 
-def pick_file(parent, title: str) -> str:
+def pick_file(parent, title: str, file_filter: str = FILE_FILTER) -> str:
     """The file picker; "" when cancelled."""
-    return QFileDialog.getOpenFileName(parent, title, "", FILE_FILTER)[0]
+    return QFileDialog.getOpenFileName(parent, title, "", file_filter)[0]
+
+
+def pick_item(parent, title: str, label: str, items: list[str]) -> str:
+    """Choose one of items (or type another); "" when cancelled."""
+    text, ok = QInputDialog.getItem(parent, title, label, items, 0, True)
+    return text.strip() if ok else ""
 
 
 # ---- event loop helpers -------------------------------------------------
@@ -775,6 +782,7 @@ def run_app(db: Path, hooks: dict | None = None, kdf: dict | None = None) -> int
     win = Window(va.START_TITLE)
     win._hooks = dict(hooks or {})
     review_hook = win._hooks.pop("review", None)
+    form_hooks = {"consent": win._hooks.pop("consent", None)}
     win.resize(720, 640)
     body = QVBoxLayout(win)
 
@@ -833,6 +841,7 @@ def run_app(db: Path, hooks: dict | None = None, kdf: dict | None = None) -> int
         _clear(body)
         win.screen_name = "files"
         vault = state["vault"]
+        win.vault = vault  # the session's vault, for the home entries
         body.addWidget(_label("Your medical files", size=18, bold=True, name="title"))
         body.addWidget(
             _label(
@@ -884,6 +893,28 @@ def run_app(db: Path, hooks: dict | None = None, kdf: dict | None = None) -> int
         body.addWidget(_button(va.CHOOSE, choose))
         body.addWidget(status)
         body.addWidget(review_btn)
+        # Home entries: each opens its window with this same vault session.
+        home = _sibling("home_forms")
+        body.addWidget(_label("Forms and your details", size=16, bold=True))
+        row = QHBoxLayout()
+        row.addWidget(
+            _button(
+                home.FILL,
+                lambda: home.open_fill(win, vault, bot_id=va.BOT_ID, hooks=form_hooks),
+            )
+        )
+        row.addWidget(
+            _button(home.MASTER, lambda: home.open_master(win, vault, bot_id=va.BOT_ID))
+        )
+        row.addWidget(
+            _button(
+                home.CONVERT,
+                lambda: home.open_convert(
+                    win, vault, bot_id=va.BOT_ID, hooks=form_hooks
+                ),
+            )
+        )
+        body.addLayout(row)
         body.addStretch(1)
         refresh()
         win.run_hook("files")

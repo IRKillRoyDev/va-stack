@@ -31,6 +31,7 @@ py-modules = [
     "field_map",
     "fill_engine",
     "fill_ui",
+    "home_forms",
     "form_convert",
     "request_ledger",
     "form_fill",
