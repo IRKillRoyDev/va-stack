@@ -395,14 +395,16 @@ draft to the vault's access log (counts and a file hash, no answers).
   number, VA file number, and bank routing or account numbers (plus email). The
   list is in `scripts/identifier_blocklist.py`. Fill those in yourself. Values
   are checked by pattern, so there are limits: a number is caught when its digit
-  groups are split by any amount of whitespace, line breaks included, with up to
-  eight punctuation marks between two groups. Digits split by letters
-  (`0001a2345a6789`) or by nine or more punctuation marks are not caught, and an
-  unlabeled number of eight digits or fewer split by a slash, comma or similar
-  mark (such as `0001/2345`) is allowed. Some ordinary numbers are left blank
-  too (for example `vitals 120 80 72 98`, a bare 11-digit NDC, `reference number
-  1234567`, or numbers on separate lines of one box that together make nine or
-  more digits). Read every draft before you use it.
+  groups are joined by anything that is not a letter or digit: any amount of
+  whitespace, line breaks included, and any amount of punctuation. Digits split
+  by letters (`0001a2345a6789`) are not caught. An unlabeled number counts from
+  seven digits (so `0001/2345` and `1,250,000` are left blank); a labeled one
+  from four. Some ordinary numbers are left blank too (for example `vitals 120
+  80 72 98`, `dose 100 1000 mg`, a bare 11-digit NDC, `reference number
+  1234567`, or numbers on separate lines of one box that together make seven
+  or more digits). The record pane hides exactly the values left blank here
+  (and labeled names too), because both use one detector
+  (`scripts/identifier_detect.py`). Read every draft before you use it.
 - Your original form is never changed (it is checked by hash). Each draft is a
   new file in the `drafts` folder inside your vault folder: `form-draft.pdf`,
   then `form-draft-2.pdf`, and so on. Nothing is replaced.

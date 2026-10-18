@@ -145,14 +145,15 @@
   when its name or value looks like a Social Security number, address, phone,
   date of birth, service number, VA file number, bank routing or account number,
   or email (`scripts/identifier_blocklist.py`). Values are checked by pattern
-  and can miss things: a number is caught when its digit groups are split by any
-  amount of whitespace, line breaks included, with up to eight punctuation marks
-  between two groups; digits split by letters or by nine or more punctuation
-  marks, and unlabeled numbers of eight digits or fewer split by a slash, comma
-  or similar mark (such as `0001/2345`), are not caught. It also leaves some
-  ordinary numbers blank (vital-sign and lab runs, bare 11-digit NDCs, generic
-  reference numbers, and number-only lines that together make nine or more
-  digits). Check every draft before you use it.
+  and can miss things: a number is caught when its digit groups are joined by
+  anything that is not a letter or digit (any amount of whitespace, line breaks
+  included, and any amount of punctuation); digits split by letters are not
+  caught. Unlabeled numbers count from seven digits, labeled ones from four. It
+  also leaves some ordinary numbers blank (vital-sign and lab runs, bare
+  11-digit NDCs, generic reference numbers, and number-only lines that together
+  make seven or more digits). The record pane hides exactly what is left blank,
+  because both use one detector (`scripts/identifier_detect.py`). Check every
+  draft before you use it.
 - **Primary sources only.** Every legal statement cites its primary source,
   fetched in the same session with an "as of" date: 38 CFR (eCFR API), the U.S.
   Code (govinfo), DoD instructions (official DoD issuances site), or live VA.gov

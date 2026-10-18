@@ -30,6 +30,7 @@ py-modules = [
     "fill_engine",
     "form_fill",
     "identifier_blocklist",
+    "identifier_detect",
     "local_search",
     "master_data",
     "proposed_issues",

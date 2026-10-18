@@ -61,6 +61,7 @@ import math
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -297,7 +298,9 @@ def _validate(obj, part: str) -> None:
 
 
 def _keys(obj, allowed: frozenset, where: str, required: frozenset) -> None:
-    if not isinstance(obj, dict):
+    # type() is, not isinstance(): a dict subclass can override items(),
+    # keys() or __iter__ and show the gate one thing and json.dumps another.
+    if type(obj) is not dict:
         raise FieldMapError(f"{where}: must be an object")
     if set(obj) - allowed:
         raise FieldMapError(f"{where}: unknown key")
@@ -355,7 +358,14 @@ def _clean_form_id(form_id) -> str:
     """The form id as it would be sent: identifier_blocklist._clean applied."""
     if type(form_id) is not str or not form_id or len(form_id) > 32:
         raise FieldMapError("$.form.id: must be a VA form number")
-    return identifier_blocklist._clean(form_id)
+    clean = identifier_blocklist._clean(form_id)
+    # NFKC and dropping invisible format characters may repair an id;
+    # anything more the shared normalize() does (folding look-alike dashes
+    # and slashes, dropping lone surrogates) refuses it instead.
+    visible = "".join(ch for ch in form_id if unicodedata.category(ch) != "Cf")
+    if clean != unicodedata.normalize("NFKC", visible):
+        raise FieldMapError("$.form.id: must be a VA form number in plain ASCII")
+    return clean
 
 
 def _check_form_id(form_id) -> str:
@@ -415,7 +425,7 @@ def check_field_name(name, where: str = "$.form.fields[].name") -> str:
 
 
 def _check_form_fields(fields, sizes: list) -> None:
-    if not isinstance(fields, list) or len(fields) > MAX_FORM_FIELDS:
+    if type(fields) is not list or len(fields) > MAX_FORM_FIELDS:
         raise FieldMapError("$.form.fields: must be a list of at most the cap")
     for k, field in enumerate(fields):
         where = f"$.form.fields[{k}]"
@@ -427,7 +437,7 @@ def _check_form_fields(fields, sizes: list) -> None:
         if not 1 <= field["page"] <= len(sizes):
             raise FieldMapError(f"{where}.page: not in the form")
         rect = field["rect"]
-        if not isinstance(rect, list) or len(rect) != 4:
+        if type(rect) is not list or len(rect) != 4:
             raise FieldMapError(f"{where}.rect: must be four whole numbers")
         for v in rect:
             _whole(v, f"{where}.rect")
@@ -438,7 +448,7 @@ def _check_form_fields(fields, sizes: list) -> None:
 
 
 def _names(raw, where: str) -> list[str]:
-    if not isinstance(raw, list):
+    if type(raw) is not list:
         raise FieldMapError(f"{where}: must be a list of names")
     if len(raw) > MAX_NAMES:
         raise FieldMapError(f"{where}: too many names")
@@ -453,7 +463,7 @@ def _check_request(payload) -> dict:
     _keys(payload, REQUEST_KEYS, "$", REQUEST_KEYS)
     _keys(payload["form"], FORM_KEYS, "$.form", FORM_KEYS)
     sizes = payload["form"]["page_sizes"]
-    if not isinstance(sizes, list):
+    if type(sizes) is not list:
         raise FieldMapError("$.form.page_sizes: must be a list")
     for k, size in enumerate(sizes):
         _keys(size, SIZE_KEYS, f"$.form.page_sizes[{k}]", SIZE_KEYS)
@@ -472,8 +482,12 @@ def _check_request(payload) -> dict:
     if form["page_count"] != len(sizes):
         raise FieldMapError("$.form.page_count: does not match page_sizes")
     _check_form_fields(form["fields"], sizes)
-    if not _names(payload["data_points"], "$.data_points"):
+    names = _names(payload["data_points"], "$.data_points")
+    if not names:
         raise FieldMapError("$.data_points: none")
+    if names != sorted(names):
+        # One order only, so the order of the names cannot carry anything.
+        raise FieldMapError("$.data_points: must be in sorted order")
     return payload
 
 
@@ -1039,7 +1053,7 @@ def prepare_request(
     "this form is blank"; other findings only warn. Raises FieldMapError on
     any value-shaped or unknown content.
     """
-    names = _names(list(names_source.data_point_names(bot_id)), "$.data_points")
+    names = sorted(_names(list(names_source.data_point_names(bot_id)), "$.data_points"))
     if not names:
         raise FieldMapError("$.data_points: none")
     form_id = _check_form_id(_clean_form_id(form_id))
@@ -1229,7 +1243,7 @@ def parse_field_map(raw, request: dict) -> dict:
     _check_request(request)
     obj = _strict_json(raw)
     _keys(obj, MAP_KEYS, "$", MAP_KEYS)
-    if not isinstance(obj["fields"], list):
+    if type(obj["fields"]) is not list:
         raise FieldMapError("$.fields: must be a list")
     for k, field in enumerate(obj["fields"]):
         _keys(field, FIELD_KEYS, f"$.fields[{k}]", FIELD_REQUIRED)
