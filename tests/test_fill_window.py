@@ -5,8 +5,9 @@ with a checklist of every place it goes, and Next / Finish. Two settings,
 stored in the vault's rules table: "By data point" (else by page or field;
 the same field list in two orders) and "Require each item checked" (Next
 and Finish stay disabled until every place of the current data point is
-ticked). Missing data points get an entry box that saves to the vault, with
-show/hide on sensitive ones (the existing name rule). There is no copy
+ticked). Missing data points get an entry box that saves to the vault.
+Every value is masked by default, held or typed, each with its own Show
+toggle. The panel is on the left, the form on the right. There is no copy
 feature. Finish writes the local completed copy (identifiers included) and
 nothing else. Screenshots go to $VA_STACK_SHOTS. Fake data only.
 """
@@ -260,7 +261,8 @@ def test_sensitive_missing_value_is_hidden_until_show(fu, case):
         win.close()
 
 
-def test_non_sensitive_missing_value_has_no_show_button(fu, case):
+def test_non_sensitive_missing_value_is_hidden_until_show_too(fu, case):
+    """Fold-in 1: every typed value is masked by default, sensitive or not."""
     case[0].set_rule("by_data_point", True, BOT)
     win = _window(fu, case)
     try:
@@ -269,9 +271,64 @@ def test_non_sensitive_missing_value_has_no_show_button(fu, case):
                 QTest.mouseClick(box, Qt.MouseButton.LeftButton, pos=QPoint(8, 8))
             click(win, "Next")
         entry = find(win, QLineEdit, "entry")
+        assert entry.echoMode() == QLineEdit.EchoMode.Password
+        click(win, "Show")
         assert entry.echoMode() == QLineEdit.EchoMode.Normal
-        show = win.findChild(QAbstractButton, "Show")
-        assert show is None or not show.isVisible()
+        click(win, "Show")
+        assert entry.echoMode() == QLineEdit.EchoMode.Password
+    finally:
+        win.close()
+
+
+HELD = "Tinnitus quorvane fake"
+
+
+def test_held_values_are_masked_until_their_own_show(fu, case):
+    """Fold-in 1: a value held in the vault is masked, with its own Show."""
+    vault = case[0]
+    vault.set_rule("by_data_point", False, BOT)
+    vault.set_rule("require_each_checked", False, BOT)
+    win = _window(fu, case)
+    try:
+        assert current(win) == "condition"  # held, not sensitive
+        value = find(win, QLabel, "value")
+        assert HELD not in value.text()
+        assert fu.master_data.MASK in value.text()
+        assert not any(HELD in t for t in visible_texts(win))
+        entry_show = win.findChild(QAbstractButton, "Show")
+        assert entry_show is None or not entry_show.isVisible()
+        click(win, "value_show")
+        assert HELD in value.text()
+        click(win, "value_show")
+        assert HELD not in value.text()
+        click(win, "value_show")
+        click(win, "Next")  # a new step starts masked again
+        while not find(win, QAbstractButton, "Finish").isVisible():
+            assert not any(HELD in t for t in visible_texts(win))
+            if current(win) == "ssn":  # missing: no held-value toggle
+                show = win.findChild(QAbstractButton, "value_show")
+                assert show is None or not show.isVisible()
+            click(win, "Next")
+    finally:
+        win.close()
+
+
+def test_the_panel_is_on_the_left_and_the_form_on_the_right(fu, case):
+    """Fold-in 2: data entry and checklist left, the PDF form view right."""
+    win = _window(fu, case)
+    try:
+        win.resize(1100, 760)
+        win.app.processEvents()
+        view = find(win, fu.QPdfView, "form_view")
+        for name in ("data_point", "value"):
+            label = find(win, QLabel, name)
+            assert (
+                label.mapTo(win, QPoint(0, 0)).x() < view.mapTo(win, QPoint(0, 0)).x()
+            )
+        for name in ("Next", "by_data_point", "require_each_checked"):
+            w = find(win, QAbstractButton, name)
+            assert w.mapTo(win, QPoint(0, 0)).x() < view.mapTo(win, QPoint(0, 0)).x()
+        assert view.mapTo(win, QPoint(0, 0)).x() > win.width() // 3
     finally:
         win.close()
 
