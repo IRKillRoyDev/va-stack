@@ -1,0 +1,244 @@
+{
+  "catalog_version": 1,
+  "description": "Data-point NAMES the vault can fill on VA forms (21-526EZ, 21-0781, 20-0995 and the forms in skills/proposed-issues/forms.json). Only names ever leave the computer; the program fills values locally. Categories order the master data window's tabs. Types: text, date, checkbox, or choice (one of a fixed set, drawn as text or as checkboxes). After editing, run tools/sync_field_map_enum.py.",
+  "categories": [
+    "identity",
+    "contact",
+    "service",
+    "banking",
+    "claim"
+  ],
+  "types": [
+    "text",
+    "date",
+    "checkbox",
+    "choice"
+  ],
+  "data_points": [
+    {
+      "name": "first_name",
+      "category": "identity",
+      "type": "text"
+    },
+    {
+      "name": "middle_name",
+      "category": "identity",
+      "type": "text"
+    },
+    {
+      "name": "middle_initial",
+      "category": "identity",
+      "type": "text"
+    },
+    {
+      "name": "last_name",
+      "category": "identity",
+      "type": "text"
+    },
+    {
+      "name": "name_suffix",
+      "category": "identity",
+      "type": "text"
+    },
+    {
+      "name": "ssn",
+      "category": "identity",
+      "type": "text"
+    },
+    {
+      "name": "va_file_number",
+      "category": "identity",
+      "type": "text"
+    },
+    {
+      "name": "date_of_birth",
+      "category": "identity",
+      "type": "date"
+    },
+    {
+      "name": "mailing_street",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "mailing_unit",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "mailing_city",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "mailing_state",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "mailing_zip",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "mailing_country",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "mailing_address",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "phone",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "international_phone",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "email",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "electronic_correspondence",
+      "category": "contact",
+      "type": "checkbox"
+    },
+    {
+      "name": "service_branch",
+      "category": "service",
+      "type": "choice"
+    },
+    {
+      "name": "service_component",
+      "category": "service",
+      "type": "choice"
+    },
+    {
+      "name": "service_entry_date",
+      "category": "service",
+      "type": "date"
+    },
+    {
+      "name": "service_separation_date",
+      "category": "service",
+      "type": "date"
+    },
+    {
+      "name": "separation_place",
+      "category": "service",
+      "type": "text"
+    },
+    {
+      "name": "service_number",
+      "category": "service",
+      "type": "text"
+    },
+    {
+      "name": "served_under_another_name",
+      "category": "service",
+      "type": "checkbox"
+    },
+    {
+      "name": "other_service_name",
+      "category": "service",
+      "type": "text"
+    },
+    {
+      "name": "served_in_combat_zone",
+      "category": "service",
+      "type": "checkbox"
+    },
+    {
+      "name": "prisoner_of_war",
+      "category": "service",
+      "type": "checkbox"
+    },
+    {
+      "name": "reserve_unit_name",
+      "category": "service",
+      "type": "text"
+    },
+    {
+      "name": "bank_name",
+      "category": "banking",
+      "type": "text"
+    },
+    {
+      "name": "bank_routing_number",
+      "category": "banking",
+      "type": "text"
+    },
+    {
+      "name": "bank_account_number",
+      "category": "banking",
+      "type": "text"
+    },
+    {
+      "name": "bank_account_type",
+      "category": "banking",
+      "type": "choice"
+    },
+    {
+      "name": "no_bank_account",
+      "category": "banking",
+      "type": "checkbox"
+    },
+    {
+      "name": "condition",
+      "category": "claim",
+      "type": "text"
+    },
+    {
+      "name": "in_service_event",
+      "category": "claim",
+      "type": "text"
+    },
+    {
+      "name": "explanation",
+      "category": "claim",
+      "type": "text"
+    },
+    {
+      "name": "approx_date",
+      "category": "claim",
+      "type": "date"
+    },
+    {
+      "name": "benefit",
+      "category": "claim",
+      "type": "choice"
+    },
+    {
+      "name": "specific_issue",
+      "category": "claim",
+      "type": "text"
+    },
+    {
+      "name": "decision_date",
+      "category": "claim",
+      "type": "date"
+    },
+    {
+      "name": "event_location",
+      "category": "claim",
+      "type": "text"
+    },
+    {
+      "name": "unit_assigned",
+      "category": "claim",
+      "type": "text"
+    },
+    {
+      "name": "date_signed",
+      "category": "claim",
+      "type": "date"
+    }
+  ]
+}

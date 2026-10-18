@@ -2,23 +2,76 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:va-stack:schema:field-map:1",
   "title": "va-stack field map (request out, map in)",
-  "description": "Names only, never values. A request lists a blank form and the NAMES of data points; a field map says where each data point goes and which are missing. scripts/field_map.py enforces the allowlist on top of this schema. Local $ref only.",
+  "description": "Names only, never values. A request lists a blank form and the NAMES of data points; a field map says where each data point goes on the page as displayed (after /Rotate) and which data points the form asks for that the request did not hold. The data_point enum is written from schemas/data_points.json by tools/sync_field_map_enum.py. scripts/field_map.py adds the checks a schema cannot hold. Local $ref only.",
   "oneOf": [
-    { "$ref": "#/$defs/request" },
-    { "$ref": "#/$defs/field_map" }
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/field_map"
+    }
   ],
   "$defs": {
     "data_point": {
-      "description": "A data-point NAME from the allowlist in scripts/field_map.py (never a value).",
+      "description": "A data-point NAME from schemas/data_points.json (never a value).",
       "type": "string",
       "minLength": 2,
       "maxLength": 40,
-      "pattern": "^[a-z][a-z_]{1,39}$"
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+      "enum": [
+        "approx_date",
+        "bank_account_number",
+        "bank_account_type",
+        "bank_name",
+        "bank_routing_number",
+        "benefit",
+        "condition",
+        "date_of_birth",
+        "date_signed",
+        "decision_date",
+        "electronic_correspondence",
+        "email",
+        "event_location",
+        "explanation",
+        "first_name",
+        "in_service_event",
+        "international_phone",
+        "last_name",
+        "mailing_address",
+        "mailing_city",
+        "mailing_country",
+        "mailing_state",
+        "mailing_street",
+        "mailing_unit",
+        "mailing_zip",
+        "middle_initial",
+        "middle_name",
+        "name_suffix",
+        "no_bank_account",
+        "other_service_name",
+        "phone",
+        "prisoner_of_war",
+        "reserve_unit_name",
+        "separation_place",
+        "served_in_combat_zone",
+        "served_under_another_name",
+        "service_branch",
+        "service_component",
+        "service_entry_date",
+        "service_number",
+        "service_separation_date",
+        "specific_issue",
+        "ssn",
+        "unit_assigned",
+        "va_file_number"
+      ]
     },
     "data_points": {
       "type": "array",
-      "items": { "$ref": "#/$defs/data_point" },
-      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/data_point"
+      },
+      "maxItems": 100,
       "uniqueItems": true
     },
     "sha256": {
@@ -28,7 +81,7 @@
       "pattern": "^[0-9a-f]{64}$"
     },
     "points": {
-      "description": "A length in PDF points (1/72 inch); 14400 is the PDF page-size limit.",
+      "description": "A length in PDF points (1/72 inch) on the page as displayed; 14400 is the PDF page-size limit.",
       "type": "number",
       "minimum": 0,
       "maximum": 14400
@@ -36,10 +89,19 @@
     "page_size": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["width", "height"],
+      "required": [
+        "width",
+        "height"
+      ],
       "properties": {
-        "width": { "$ref": "#/$defs/points", "exclusiveMinimum": 0 },
-        "height": { "$ref": "#/$defs/points", "exclusiveMinimum": 0 }
+        "width": {
+          "$ref": "#/$defs/points",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "$ref": "#/$defs/points",
+          "exclusiveMinimum": 0
+        }
       }
     },
     "label": {
@@ -52,20 +114,36 @@
     "request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "kind", "form", "data_points"],
+      "required": [
+        "schema_version",
+        "kind",
+        "form",
+        "data_points"
+      ],
       "properties": {
-        "schema_version": { "const": 1 },
-        "kind": { "const": "field_map_request" },
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "field_map_request"
+        },
         "form": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "name", "sha256", "page_count", "page_sizes"],
+          "required": [
+            "id",
+            "name",
+            "sha256",
+            "page_count",
+            "page_sizes"
+          ],
           "properties": {
             "id": {
+              "description": "A VA form number such as 21-526EZ, VA 21-0781, 20-0995 or 10182.",
               "type": "string",
-              "minLength": 1,
+              "minLength": 3,
               "maxLength": 16,
-              "pattern": "^[0-9A-Z][0-9A-Z-]{0,15}$"
+              "pattern": "^(?:VA )?(?:[0-9]{2}[A-Z]{0,2}-)?[0-9]{3,5}[A-Z]{0,3}$"
             },
             "name": {
               "type": "string",
@@ -73,55 +151,142 @@
               "maxLength": 80,
               "pattern": "^[A-Za-z][A-Za-z0-9 ().,'/&:-]{0,79}$"
             },
-            "sha256": { "$ref": "#/$defs/sha256" },
-            "page_count": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "page_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
             "page_sizes": {
               "type": "array",
-              "items": { "$ref": "#/$defs/page_size" },
+              "items": {
+                "$ref": "#/$defs/page_size"
+              },
               "minItems": 1,
               "maxItems": 100
             }
           }
         },
-        "data_points": { "$ref": "#/$defs/data_points", "minItems": 1 }
+        "data_points": {
+          "$ref": "#/$defs/data_points",
+          "minItems": 1
+        }
       }
     },
     "field": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["page", "rect", "type", "data_point"],
+      "required": [
+        "page",
+        "rect",
+        "type",
+        "data_point"
+      ],
       "properties": {
-        "page": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
         "rect": {
-          "description": "[x0, y0, x1, y1] in PDF points from the lower-left corner of the page.",
+          "description": "[x0, y0, x1, y1] in PDF points from the lower-left corner of the page as displayed (after /Rotate).",
           "type": "array",
-          "items": { "$ref": "#/$defs/points" },
+          "items": {
+            "$ref": "#/$defs/points"
+          },
           "minItems": 4,
           "maxItems": 4
         },
-        "type": { "enum": ["text", "checkbox", "date"] },
-        "data_point": { "$ref": "#/$defs/data_point" },
-        "label": { "$ref": "#/$defs/label" },
+        "type": {
+          "enum": [
+            "text",
+            "checkbox",
+            "date"
+          ]
+        },
+        "data_point": {
+          "$ref": "#/$defs/data_point"
+        },
+        "label": {
+          "$ref": "#/$defs/label"
+        },
         "format": {
-          "enum": ["plain", "uppercase", "MM-DD-YYYY", "MM/DD/YYYY", "MM-YYYY", "YYYY", "check"]
+          "description": "Text case, or the date order the form prints.",
+          "enum": [
+            "plain",
+            "uppercase",
+            "MM/DD/YYYY",
+            "MM-DD-YYYY",
+            "MMDDYYYY",
+            "YYYY-MM-DD",
+            "MM/YYYY",
+            "MM-YYYY",
+            "MMYYYY",
+            "YYYY",
+            "check"
+          ]
+        },
+        "comb": {
+          "description": "One character per box (segmented SSN or date boxes); needs max_length.",
+          "type": "boolean"
+        },
+        "max_length": {
+          "description": "Most characters the field holds; for a comb field, the number of boxes.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
         }
+      },
+      "if": {
+        "properties": {
+          "comb": {
+            "const": true
+          }
+        },
+        "required": [
+          "comb"
+        ]
+      },
+      "then": {
+        "required": [
+          "max_length"
+        ]
       }
     },
     "field_map": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "kind", "form_sha256", "fields", "missing"],
+      "required": [
+        "schema_version",
+        "kind",
+        "form_sha256",
+        "fields",
+        "missing"
+      ],
       "properties": {
-        "schema_version": { "const": 1 },
-        "kind": { "const": "field_map" },
-        "form_sha256": { "$ref": "#/$defs/sha256" },
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "field_map"
+        },
+        "form_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
         "fields": {
           "type": "array",
-          "items": { "$ref": "#/$defs/field" },
+          "items": {
+            "$ref": "#/$defs/field"
+          },
           "minItems": 1,
           "maxItems": 200
         },
-        "missing": { "$ref": "#/$defs/data_points" }
+        "missing": {
+          "$ref": "#/$defs/data_points",
+          "description": "Catalog names the form asks for that the request did not hold."
+        }
       }
     }
   }
