@@ -63,6 +63,7 @@ class _Names:
 def _form(path):
     c = canvas.Canvas(str(path), pagesize=(612, 792))
     c.setFont("Helvetica", 14)
+    c.rect(72, 760, 300, 12, stroke=0, fill=1)  # solid ink for the pixel check
     c.drawString(72, 740, "Fictional claim form for tests")
     f = c.acroForm
     for k, name in enumerate(("Condition", "ApproxDate", "SSN", "Remarks")):
@@ -366,9 +367,9 @@ def test_screenshot_shows_the_form_and_the_panel(fu, case, by_point, name):
         view = win.findChild(fu.QPdfView, "form_view")
         assert view is not None and view.isVisible()
         img = view.grab().toImage()
-        assert (
-            _dark_pixels(img, (0, 0, img.width(), img.height())) > 100
-        )  # a blank view: ~0
+        # A blank view has ~0 dark pixels; the form's header bar alone gives
+        # several hundred on every OS (thin text alone varies by platform).
+        assert _dark_pixels(img, (0, 0, img.width(), img.height())) > 300
         panel = find(win, QLabel, "data_point")
         assert panel.isVisible() and panel.text()
     finally:
