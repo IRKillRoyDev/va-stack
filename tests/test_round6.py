@@ -233,7 +233,10 @@ def test_redaction_gaps(text, secret):
 
 
 def test_ref_is_part_label():
-    assert ls.redact("ref 555-123-4567", keep_dates=True)[0] == "ref 555-123-4567"
+    # A part label still means "not a phone"; the 10-digit number is hidden
+    # as a generic number, as the form blocklist always blocked it (round 17).
+    out, counts = ls.redact("ref 555-123-4567", keep_dates=True)
+    assert out == "ref [REDACTED-NUMBER]" and "PHONE" not in counts, out
 
 
 @pytest.mark.parametrize(

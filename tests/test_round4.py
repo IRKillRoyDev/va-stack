@@ -68,9 +68,12 @@ def test_n1_bare_year_documented_gap():
 
 
 # N4: no bare 7-digit phones
+# Round 17: never phones, but 7-digit runs are hidden as numbers exactly
+# where the form blocklist blocks them (block == redact).
 @pytest.mark.parametrize("s", ["250-5000 ref", "LDL 130-1600", "range 120.1300 units"])
 def test_n4_ranges_not_phones(s):
-    assert ls.redact(s)[0] == s
+    out, counts = ls.redact(s)
+    assert "PHONE" not in counts and "[REDACTED-NUMBER]" in out, out
 
 
 @pytest.mark.parametrize(
@@ -82,8 +85,9 @@ def test_n4_phones_still_redacted(s):
     assert "0199" not in out and "0142" not in out, out
 
 
-def test_n4_unlabeled_spaced_phone_documented_gap():
-    assert ls.redact("555 010 0199")[0] == "555 010 0199"
+def test_n4_unlabeled_spaced_phone_now_redacted():
+    # Round 17 closed this documented gap: any 7+ digit run is hidden.
+    assert "0199" not in ls.redact("555 010 0199")[0]
 
 
 # N3: ZIP needs city/street before and end or punctuation after
