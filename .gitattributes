@@ -3,3 +3,9 @@
 *.bat text eol=crlf
 *.png binary
 *.pdf binary
+
+# File modes: setup.sh, start-va-stack.sh and "Start VA Stack.command" should
+# be 100755, but this repo is updated through a tool that stores every file
+# as 100644, and .gitattributes cannot set a mode. So run setup as
+# `bash setup.sh` (README and CI do), and setup.sh runs
+# chmod +x start-va-stack.sh "Start VA Stack.command" on every run.

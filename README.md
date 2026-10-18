@@ -258,7 +258,7 @@ Stay in the va-stack folder with `(.venv)` showing (run step 3 and step 5 again 
 va-stack
 ```
 
-The VA Stack window opens. Tick the consent box, choose a passphrase (or type yours to unlock), click **Choose medical file** to add a PDF or text file, then **Start review**. Your vault is kept in the folder named above. Without a screen, `va-stack --cli` asks the same questions in the terminal. Developers can also double-click `Start VA Stack.command` (macOS) or `Start VA Stack.bat` (Windows), or run `./start-va-stack.sh` (Linux); each one only turns on the private `.venv` folder and runs `va-stack`.
+The VA Stack window opens. Tick the consent box, choose a passphrase (or type yours to unlock), click **Choose medical file** to add a PDF or text file, then **Start review**. Your vault is kept in the folder named above. Without a screen, `va-stack --cli` asks the same questions in the terminal. Developers can also double-click `Start VA Stack.command` (macOS) or `Start VA Stack.bat` (Windows), or run `./start-va-stack.sh` (Linux); each one only turns on the private `.venv` folder and runs `va-stack`. If a start file says "Permission denied" or will not open, run `bash setup.sh --no-launch` again; it makes the start files runnable.
 
 ## Pipeline
 

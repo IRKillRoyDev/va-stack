@@ -179,11 +179,10 @@ jobs:
           set -euo pipefail
           bash setup.sh --no-launch
           test -x start-va-stack.sh && test -x "Start VA Stack.command"
-          .venv/bin/python tests/ci_vault_hash.py create | tee before.txt
+          state="$RUNNER_TEMP/vault-state.json"
+          .venv/bin/python tests/ci_vault_hash.py create "$state"
           bash setup.sh --no-launch
-          .venv/bin/python tests/ci_vault_hash.py hash | tee after.txt
-          diff before.txt after.txt
-          echo "vault unchanged after the second run"
+          .venv/bin/python tests/ci_vault_hash.py check "$state"
       - name: Setup twice keeps the vault (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -191,9 +190,17 @@ jobs:
           $ErrorActionPreference = "Stop"
           .\setup.ps1 -NoLaunch
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          .venv\Scripts\python.exe tests\ci_vault_hash.py create | Tee-Object -FilePath before.txt
+          $state = Join-Path $env:RUNNER_TEMP "vault-state.json"
+          .venv\Scripts\python.exe tests\ci_vault_hash.py create $state
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           .\setup.ps1 -NoLaunch
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          .venv\Scripts\python.exe tests\ci_vault_hash.py hash | Tee-Object -FilePath after.txt
-          if (Compare-Object (Get-Content before.txt) (Get-Content after.txt)) { Write-Error "vault changed"; exit 1 }
-          Write-Host "vault unchanged after the second run"
+          .venv\Scripts\python.exe tests\ci_vault_hash.py check $state
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Pytest setup-twice test (scratch copy, isolated per-user folder)
+        shell: bash
+        env:
+          VA_STACK_SETUP_TEST: "1"
+        run: |
+          python -m pip install pytest==8.3.3
+          python -m pytest -v -rs tests/test_setup_twice.py
