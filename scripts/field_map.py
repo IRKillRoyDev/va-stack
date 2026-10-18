@@ -187,7 +187,17 @@ FORM_FIELD_KEYS = frozenset({"name", "type", "page", "rect"})
 SIZE_KEYS = frozenset({"width", "height"})
 MAP_KEYS = frozenset({"schema_version", "kind", "form_sha256", "fields", "missing"})
 FIELD_KEYS = frozenset(
-    {"page", "rect", "type", "data_point", "label", "format", "comb", "max_length"}
+    {
+        "page",
+        "rect",
+        "type",
+        "data_point",
+        "label",
+        "format",
+        "comb",
+        "max_length",
+        "field",
+    }
 )
 FIELD_REQUIRED = frozenset({"page", "rect", "type", "data_point"})
 
@@ -624,6 +634,16 @@ def _form_fields(reader: PdfReader) -> tuple[list[dict], int]:
             if len(out) > MAX_FORM_FIELDS:
                 raise FieldMapError("form: too many form fields")
     return out, unnamed
+
+
+def form_fields(pdf_bytes: bytes) -> list[dict]:
+    """The field list a request would carry for this PDF (names, never values).
+
+    When to use: by the fill engine, to check that a request was made from
+    the very form it is about to fill.
+    """
+    fields, _ = _form_fields(_reader(pdf_bytes))
+    return fields
 
 
 def _displayed_size(page) -> dict:
@@ -1149,7 +1169,7 @@ def _strict_json(raw):
         raise FieldMapError("$: not valid JSON") from exc
 
 
-def _check_field(field: dict, where: str, sizes: list) -> None:
+def _check_field(field: dict, where: str, sizes: list, widgets=frozenset()) -> None:
     name = check_name(field["data_point"], f"{where}.data_point")
     _whole(field["page"], f"{where}.page")
     if "max_length" in field:
@@ -1174,6 +1194,12 @@ def _check_field(field: dict, where: str, sizes: list) -> None:
         raise FieldMapError(f"{where}.max_length: must equal the date format's length")
     if "label" in field:
         check_label(field["label"], f"{where}.label")
+    if "field" in field:
+        check_field_name(field["field"], f"{where}.field")
+        if (field["field"], field["page"]) not in widgets:
+            raise FieldMapError(
+                f"{where}.field: not a form field of the request on that page"
+            )
     if field["page"] > len(sizes):
         raise FieldMapError(f"{where}.page: not in the form")
     x0, y0, x1, y1 = field["rect"]
@@ -1190,7 +1216,9 @@ def parse_field_map(raw, request: dict) -> dict:
     When to use: on every field map that comes back, before anything uses
     it. Returns the map (plain dicts and lists). Every mapped data_point must
     be a catalog name, placed at most MAX_PLACEMENTS_PER_POINT times.
-    missing must be exactly the mapped names the request did not hold: a
+    An entry may name the form field it fills ("field"); that must be one of
+    the request's form.fields on the same page. missing must be exactly the
+    mapped names the request did not hold: a
     name mapped but not requested must be listed, and a listed name must be
     mapped and not requested. A requested name the form does not use is
     fine, and so is an empty map (fields [] and missing []) for a form that
@@ -1210,9 +1238,10 @@ def parse_field_map(raw, request: dict) -> dict:
     if obj["form_sha256"] != request["form"]["sha256"]:
         raise FieldMapError("$.form_sha256: answers a different form")
     sizes = request["form"]["page_sizes"]
+    widgets = {(w["name"], w["page"]) for w in request["form"]["fields"]}
     placed: dict[str, int] = {}
     for k, field in enumerate(obj["fields"]):
-        _check_field(field, f"$.fields[{k}]", sizes)
+        _check_field(field, f"$.fields[{k}]", sizes, widgets)
         name = field["data_point"]
         placed[name] = placed.get(name, 0) + 1
         if placed[name] > MAX_PLACEMENTS_PER_POINT:

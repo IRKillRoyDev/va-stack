@@ -29,7 +29,14 @@ in this repository. It is not a security promise: read
   - `drafts`: draft copies of VA forms, if you make any. Drafts are plain
     PDF files and are **not encrypted**. A new draft never replaces an
     existing file; it gets a new name (`-draft-2.pdf`, `-draft-3.pdf`,
-    and so on).
+    and so on). A form filled from your saved details is saved here too, as
+    `<form name> completed.pdf` (then `completed-2.pdf`, and so on), with
+    the DRAFT mark on every page. Your SSN and other identifiers are never
+    filled in.
+- **The folder of a form you fill from your saved details:** one new file,
+  `<form name> fillable.pdf`, a copy of the form with every field emptied.
+  It never replaces a file there (`fillable-2.pdf`, `fillable-3.pdf`, and
+  so on), and the form itself is not changed.
 - **A copy of the log summary**, only if you ask for one, at the place you
   choose.
 - **This repository's folder, during setup:**

@@ -45,7 +45,6 @@ def _load(name):
     return mod
 
 
-rv = _load("records_vault")
 fm = _load("field_map")
 
 
@@ -69,18 +68,21 @@ def _pw():
     return bytearray(b"correct horse fake")
 
 
-def _gate():
-    gate = rv.ConsentGate()
+def _gate(mod):
+    gate = mod.ConsentGate()
     gate.acknowledge()
     return gate
 
 
 @pytest.fixture
-def vault(tmp_path):
+def vault(fe, tmp_path):
+    # Each test file loads its own records_vault module, so build the vault
+    # from the one the engine checks against (its type check is strict).
+    mod = fe.form_fill.records_vault
     db = tmp_path / "vault" / "records.db"
     db.parent.mkdir()
-    rv.create_vault(db, _pw(), kdf_params=FAST, insecure_test_kdf=True)
-    v = rv.Vault.open(db, _pw(), _gate())
+    mod.create_vault(db, _pw(), kdf_params=FAST, insecure_test_kdf=True)
+    v = mod.Vault.open(db, _pw(), _gate(mod))
     for name, value in VALUES.items():
         v.set_data_point(name, value, bot_id=BOT)
     yield v
@@ -129,12 +131,13 @@ def _entry(req, field, data_point, type_="text"):
 
 
 def _map(req, entries=None):
-    entries = entries or [
-        _entry(req, "Condition", "condition"),
-        _entry(req, "ApproxDate", "approx_date"),
-        _entry(req, "SSN", "ssn"),
-        _entry(req, "Homeless", "currently_homeless", "checkbox"),
-    ]
+    if entries is None:
+        entries = [
+            _entry(req, "Condition", "condition"),
+            _entry(req, "ApproxDate", "approx_date", "date"),
+            _entry(req, "SSN", "ssn"),
+            _entry(req, "Homeless", "currently_homeless", "checkbox"),
+        ]
     return json.dumps(
         {
             "schema_version": 1,
@@ -282,10 +285,11 @@ def test_flat_form_is_refused_until_the_converter_exists(fe, vault, tmp_path):
 
 def test_needs_an_open_records_vault(fe, vault, setup):
     src, req, raw, out = setup
-    with pytest.raises(rv.VaultError):
+    mod = fe.form_fill.records_vault
+    with pytest.raises(mod.VaultError):
         fe.fill_form(object(), src, raw, req, bot_id=BOT, completed_dir=out)
     vault.close()
-    with pytest.raises(rv.VaultLocked):
+    with pytest.raises(mod.VaultLocked):
         fe.fill_form(vault, src, raw, req, bot_id=BOT, completed_dir=out)
 
 

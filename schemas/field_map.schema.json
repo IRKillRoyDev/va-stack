@@ -288,6 +288,12 @@
         "label": {
           "$ref": "#/$defs/label"
         },
+        "field": {
+          "description": "The name of the request's form field (form.fields) this entry fills, on the same page. Optional; the fill engine fills only entries that name one.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
         "format": {
           "description": "Text case, or the date order the form prints.",
           "enum": [
