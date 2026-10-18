@@ -8,8 +8,17 @@
    "in_service_event": "Skin rash treated during deployment (fictional)",
    "approx_date": "06-2004",
    "dc": "7806",
-   "findings": {"body_area_percent": 20, "treatment": "topical"},
-   "evidence": [{"file": "derm-fake.txt", "page": 1, "quote": "Exam: characteristic lesions on about 20 percent of the entire body; exposed areas not measured."}]
+   "findings": {
+    "body_area_percent": 20,
+    "treatment": "topical"
+   },
+   "evidence": [
+    {
+     "file": "derm-fake.txt",
+     "page": 1,
+     "quote": "Exam: characteristic lesions on about 20 percent of the entire body; exposed areas not measured."
+    }
+   ]
   },
   {
    "condition": "Tinnitus",
@@ -17,8 +26,21 @@
    "in_service_event": "Noise exposure, heavy equipment (fictional)",
    "approx_date": "03-2003",
    "dc": "6260",
-   "findings": {"tinnitus": "recurrent"},
-   "evidence": [{"file": "va-clinic-fake.txt", "page": 3, "quote": "2025-04-02 Diagnosis: tinnitus, bilateral."}, {"file": "va-clinic-fake.txt", "page": 3, "quote": "Patient reports recurrent ringing in both ears."}]
+   "findings": {
+    "tinnitus": "recurrent"
+   },
+   "evidence": [
+    {
+     "file": "va-clinic-fake.txt",
+     "page": 3,
+     "quote": "2025-04-02 Diagnosis: tinnitus, bilateral."
+    },
+    {
+     "file": "va-clinic-fake.txt",
+     "page": 3,
+     "quote": "Patient reports recurrent ringing in both ears."
+    }
+   ]
   },
   {
    "condition": "Lumbosacral strain",
@@ -27,7 +49,13 @@
    "approx_date": "03-2003",
    "dc": "5237",
    "findings": {},
-   "evidence": [{"file": "str-fake.txt", "page": 2, "quote": "2003-03-14 Sick call: Member injured lower back lifting equipment during training."}]
+   "evidence": [
+    {
+     "file": "str-fake.txt",
+     "page": 2,
+     "quote": "2003-03-14 Sick call: Member injured lower back lifting equipment during training."
+    }
+   ]
   }
  ]
 }
