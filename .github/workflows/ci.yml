@@ -83,7 +83,7 @@ jobs:
           python -c "import PySide6.QtPdfWidgets, PySide6; print('PySide6', PySide6.__version__)"
           set -o pipefail
           xvfb-run -a pytest -v -rs tests/test_gui_headless.py tests/test_app_gui.py tests/test_qt_gui.py | tee gui.txt
-          grep -q "12 passed" gui.txt
+          grep -q "14 passed" gui.txt
           ls -l "$VA_STACK_SHOTS"
       - name: Upload screenshots
         if: always()

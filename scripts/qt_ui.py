@@ -225,12 +225,28 @@ def _rows(text: str) -> list[tuple[int, int, str]]:
     return out
 
 
-def quote_rects(text: str, quote: str, line: int = 1) -> list[tuple[float, ...]]:
-    """Boxes (x0, y0, x1, y1 in points, top-left origin) around the quote.
+def page_of_link(link: str) -> int:
+    """The 1-based page number in a vault link ("vault://<id>#page=3" -> 3)."""
+    head, sep, page = str(link).rpartition("#page=")
+    if not sep or not head or not page.isdigit() or int(page) < 1:
+        raise ValueError("not a vault page link")
+    return int(page)
 
-    When to use: by render_page(). Whitespace is compared loosely (the
-    quote is one line of words; the page may wrap it). When the quote is on
-    the page more than once, the copy nearest the cited line wins.
+
+def quote_rects(text: str, quote: str, line: int = 1) -> list[tuple[float, ...]]:
+    """Boxes (x0, y0, x1, y1 in points, top-left origin) around the quote."""
+    return quote_spot(text, quote, line)[0]
+
+
+def quote_spot(text: str, quote: str, line: int = 1) -> tuple[list, int]:
+    """(boxes around the quote, 1-based source line where the boxes start).
+
+    When to use: by render_page() and the page pane. Lines are counted from
+    1 in the page text, before word-wrapping, the same way vault links and
+    report rows count them. Whitespace is compared loosely (the quote is
+    one line of words; the page may wrap it). When the quote is on the page
+    more than once, the copy nearest the cited line wins. Not found: no
+    boxes and the cited line.
     """
     rows = _rows(text)
     flat: list[str] = []
@@ -251,13 +267,13 @@ def quote_rects(text: str, quote: str, line: int = 1) -> list[tuple[float, ...]]
     joined = "".join(flat)
     target = " ".join((quote or "").split())
     if not target:
-        return []
+        return [], line
     hits, pos = [], joined.find(target)
     while pos != -1:
         hits.append(pos)
         pos = joined.find(target, pos + 1)
     if not hits:
-        return []
+        return [], line
 
     def distance(p: int) -> int:
         first = next(w for w in where[slice(p, None)] if w is not None)
@@ -268,7 +284,7 @@ def quote_rects(text: str, quote: str, line: int = 1) -> list[tuple[float, ...]]
     for w in where[slice(pos, pos + len(target))]:
         if w is not None:
             spans.setdefault(w[0], []).append(w[1])
-    return [
+    boxes = [
         (
             MARGIN + min(cols) * CHAR_W,
             MARGIN + r * LINE_H,
@@ -277,6 +293,7 @@ def quote_rects(text: str, quote: str, line: int = 1) -> list[tuple[float, ...]]
         )
         for r, cols in sorted(spans.items())
     ]
+    return boxes, rows[min(spans)][0] + 1
 
 
 def _drawable(text: str) -> str:
@@ -323,6 +340,8 @@ class PagePane(QWidget):
         self.view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
         self.caption = _label("", name="page_caption")
         self.field_id = None
+        self.page = 0
+        self.line = 0
         self.rects: list = []
         self._buffer = None
         self._pages: dict[str, str] = {}
@@ -332,11 +351,21 @@ class PagePane(QWidget):
         box.addWidget(self.view, 1)
 
     def show_field(self, field: dict) -> None:
-        """Load the field's page and box the exact quote."""
+        """Load the field's page and box the exact quote.
+
+        The page number comes from the field's vault link and must equal
+        the page the field cites; the line is where the boxed words start
+        on that page (1-based, before wrapping).
+        """
         link = field["link"]
+        page = page_of_link(link)
+        if page != field["page"]:
+            raise ValueError("the field's link and page disagree")
         if link not in self._pages:
             self._pages[link] = self.vault.open_link(link, bot_id=self.bot_id)
-        data, self.rects = render_page(self._pages[link], field["value"], field["line"])
+        text = self._pages[link]
+        data, self.rects = render_page(text, field["value"], field["line"])
+        _boxes, line = quote_spot(text, field["value"], field["line"])
         self._buffer = QBuffer(self)
         self._buffer.setData(QByteArray(data))
         self._buffer.open(QIODevice.OpenModeFlag.ReadOnly)
@@ -346,12 +375,14 @@ class PagePane(QWidget):
                 break
             QApplication.processEvents()
         self.field_id = field["id"]
-        where = f"Page {field['page']}, line {field['line']}"
+        self.page, self.line = page, line
+        where = f"{field['label']} (page {page}, line {line})"
         if not self.rects:
             where += " (the exact words were not found on the page; read it all)"
         self.caption.setText(where)
         top = self.rects[0][1] if self.rects else 0.0
         self.view.pageNavigator().jump(0, QPointF(0.0, max(0.0, top - 48.0)), 0)
+        self.view.viewport().update()
 
     def highlighted_text(self) -> str:
         """The page text inside the boxes (what the yellow box covers)."""
@@ -518,9 +549,15 @@ class ReviewWindow(Window):
 
     # ---- actions -----------------------------------------------------
     def select(self, field_id: str) -> None:
-        """Clicking a field shows its exact source spot on the page."""
+        """Clicking a field shows its exact source spot on the page.
+
+        Only fields of the form on screen can be shown, so the pane always
+        matches a field the user can see.
+        """
+        index, field = self.fr._by_id[field_id]
+        if index != self.fr.form_index:
+            raise ValueError("that field is not on the form on screen")
         self.current_field = field_id
-        _i, field = self.fr._by_id[field_id]
         if self.pane.field_id != field_id:
             self.pane.show_field(field)
 
@@ -837,14 +874,22 @@ def run_app(db: Path, hooks: dict | None = None, kdf: dict | None = None) -> int
 def shoot(widget: QWidget, path: Path) -> Path:
     """Save a PNG of a window (works offscreen too).
 
-    QPdfView draws pages in the background, so give it a moment first.
+    A window that is not on screen is shown for the picture (QPdfView only
+    draws pages for a visible view) and hidden again. QPdfView draws pages
+    in the background, so give it a moment first.
     """
+    was_hidden = not widget.isVisible()
+    if was_hidden:
+        widget.show()
     deadline = time.monotonic() + 1.5
     while time.monotonic() < deadline:
         app().processEvents()
         time.sleep(0.02)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if not widget.grab().save(str(path), "PNG"):
+    saved = widget.grab().save(str(path), "PNG")
+    if was_hidden:
+        widget.hide()
+    if not saved:
         raise OSError(f"could not save {path.name}")
     return path

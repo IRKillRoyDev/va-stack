@@ -381,7 +381,7 @@ def test_page_pane_renders_text_and_yellow_box_at_the_spot(db):
         view = win.pane.view
         margin = view.documentMargins().left()
         scale = (view.viewport().width() - 2 * margin) / qt.PAGE_W
-        x0, y0, x1, y1 = win.pane.rects[0]
+        x0, y0, _x1, y1 = win.pane.rects[0]
         scroll = view.verticalScrollBar().value()
         top = view.documentMargins().top() + y0 * scale - scroll
         bottom = view.documentMargins().top() + y1 * scale - scroll
