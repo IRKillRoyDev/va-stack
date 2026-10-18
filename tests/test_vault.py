@@ -221,7 +221,8 @@ def test_cli_has_no_password_argument():
 
 def test_ui_imports_without_display_and_gates_password():
     ui = _load("vault_ui")
-    src = (ROOT / "scripts" / "vault_ui.py").read_text()
-    assert 'show="*", state="disabled"' in src
+    src = (ROOT / "scripts" / "qt_ui.py").read_text()
+    assert "QLineEdit.EchoMode.Password" in src
+    assert "password.setEnabled(False)" in src
     assert "flow.password_enabled" in src
     assert hasattr(ui, "run")

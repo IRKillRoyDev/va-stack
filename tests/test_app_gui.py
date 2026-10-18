@@ -1,8 +1,8 @@
-"""Drive the whole app window under Xvfb: launch, create vault, pick a file,
-review, Confirm all. Saves a PNG of every screen (fake data only).
+"""Drive the whole app window: launch, create vault, pick a file, review,
+Confirm all, through va_stack_app.run_gui() (PySide6, offscreen). Saves a
+PNG of every screen (fake data only).
 
-Screenshots go to $VA_STACK_SHOTS (default /workspace/va-stack-shots/).
-Skipped when tkinter or a display is missing.
+Screenshots go to $VA_STACK_SHOTS (default: va-stack-shots in the temp folder).
 """
 
 from __future__ import annotations
@@ -10,22 +10,26 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
-
-tk = pytest.importorskip("tkinter")
-if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-    pytest.skip("no display", allow_module_level=True)
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QCheckBox, QLabel, QLineEdit, QPushButton
 
 ROOT = Path(__file__).resolve().parents[1]
 PW = "correct horse fake"
 FAST = {"time_cost": 1, "memory_cost": 8192, "parallelism": 1}
-SHOTS = Path(os.environ.get("VA_STACK_SHOTS", "/workspace/va-stack-shots"))
+SHOTS = Path(
+    os.environ.get("VA_STACK_SHOTS") or Path(tempfile.gettempdir()) / "va-stack-shots"
+)
 FAKE_FILES = [ROOT / "examples" / "records" / n for n in ("va-clinic-fake.txt",)]
 
 
 def _load(name):
+    if name in sys.modules:
+        return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
@@ -34,131 +38,104 @@ def _load(name):
 
 
 app = _load("va_stack_app")
-rv = sys.modules["records_vault"]
+qt = _load("qt_ui")
+rv = qt.rv
 
 
-def widgets(root, cls=None, text=None):
-    out, stack = [], [root]
-    while stack:
-        w = stack.pop()
-        stack.extend(w.winfo_children())
-        if cls is not None and not isinstance(w, cls):
-            continue
-        if text is not None and str(w.cget("text")) != text:
-            continue
-        out.append(w)
-    return out
+def labels(win):
+    return [lab.text() for lab in win.findChildren(QLabel) if lab.isVisible()]
 
 
-def labels(root):
-    return [str(w.cget("text")) for w in widgets(root, tk.Label)]
+def click(win, name):
+    qt.app().processEvents()
+    btn = win.findChild(QPushButton, name)
+    assert btn is not None and btn.isEnabled(), name
+    QTest.mouseClick(btn, Qt.MouseButton.LeftButton)
+    qt.app().processEvents()
 
 
-def click(root, text):
-    root.update()
-    (button,) = widgets(root, tk.Button, text)
-    button.invoke()
-    root.update()
-
-
-def shot(root, name):
-    """Save a PNG of the window (Pillow ImageGrab on the X display)."""
-    from PIL import ImageGrab
-
-    root.update()
-    root.lift()
-    root.update_idletasks()
-    x, y = root.winfo_rootx(), root.winfo_rooty()
-    w, h = root.winfo_width(), root.winfo_height()
-    SHOTS.mkdir(parents=True, exist_ok=True)
-    img = ImageGrab.grab(bbox=(x, y, x + w, y + h), xdisplay=os.environ.get("DISPLAY"))
-    path = SHOTS / f"{name}.png"
-    img.save(path)
+def shot(win, name):
+    path = qt.shoot(win, SHOTS / f"{name}.png")
     assert path.stat().st_size > 1000
     return path
 
 
 @pytest.fixture(autouse=True)
 def quiet_dialogs(monkeypatch):
-    from tkinter import messagebox
-
     seen = []
-    for name in ("showinfo", "showwarning", "showerror"):
-        monkeypatch.setattr(
-            messagebox, name, lambda *a, _n=name, **k: seen.append((_n, a))
-        )
+    for name in ("info", "warn", "error"):
+        monkeypatch.setattr(qt, name, lambda _p, t, x, _n=name: seen.append((_n, t)))
+    monkeypatch.setattr(qt, "ask", lambda *_a: True)
     return seen
 
 
 def test_launch_pick_file_review_confirm(tmp_path, monkeypatch, quiet_dialogs):
-    from tkinter import filedialog
-
     db = tmp_path / "data" / "vault.db"
     db.parent.mkdir()
     picked = iter([str(p) for p in FAKE_FILES])
     asked = []
 
-    def fake_dialog(**kw):
-        asked.append(kw)
+    def fake_dialog(_parent, title):
+        asked.append(title)
         return next(picked)
 
-    monkeypatch.setattr(filedialog, "askopenfilename", fake_dialog)
+    monkeypatch.setattr(qt, "pick_file", fake_dialog)
     events = []
 
-    def start(root):
-        assert "Create your private vault" in labels(root)
-        assert not any("Enter" in t and "Yes" in t for t in labels(root))
-        shot(root, "01-start")
-        (tick,) = widgets(root, tk.Checkbutton)
-        first, again = widgets(root, tk.Entry)[::-1]
-        first.insert(0, PW)
-        again.insert(0, PW + " typo")
-        click(root, "Create vault")  # no consent yet: refused
-        assert not db.exists() and quiet_dialogs[-1][0] == "showinfo"
-        tick.invoke()
-        click(root, "Create vault")  # passphrases differ: refused
+    def start(win):
+        assert "Create your private vault" in labels(win)
+        assert not any("Enter" in t and "Yes" in t for t in labels(win))
+        shot(win, "01-start")
+        tick = win.findChild(QCheckBox, "consent")
+        first = win.findChild(QLineEdit, "passphrase")
+        again = win.findChild(QLineEdit, "again")
+        QTest.keyClicks(first, PW)
+        QTest.keyClicks(again, PW + " typo")
+        click(win, "Create vault")  # no consent yet: refused
+        assert not db.exists() and quiet_dialogs[-1][0] == "info"
+        QTest.mouseClick(tick, Qt.MouseButton.LeftButton, pos=QPoint(8, 8))
+        click(win, "Create vault")  # passphrases differ: refused
         assert not db.exists()
-        tick.invoke()  # untick, then tick again below
-        tick.invoke()
-        first, again = widgets(root, tk.Entry)[::-1]
-        first.delete(0, "end")
-        again.delete(0, "end")
-        first.insert(0, PW)
-        again.insert(0, PW)
+        QTest.keyClicks(first, PW)
+        QTest.keyClicks(again, PW)
         events.append("created")
-        click(root, "Create vault")
+        click(win, "Create vault")
 
-    def files(root):
+    def files(win):
         assert db.exists()
-        assert "No files yet." in labels(root)
-        (review,) = widgets(root, tk.Button, app.START_REVIEW)
-        assert str(review.cget("state")) == "disabled"
-        shot(root, "02-files-empty")
-        click(root, app.CHOOSE)
-        assert asked and "pdf" in str(asked[0]["filetypes"]).lower()
-        assert any(t.startswith("va-clinic-fake.txt") for t in labels(root))
-        shot(root, "03-files-imported")
+        assert "No files yet." in labels(win)
+        review = win.findChild(QPushButton, app.START_REVIEW)
+        assert not review.isEnabled()
+        shot(win, "02-files-empty")
+        click(win, app.CHOOSE)
+        assert asked == [app.CHOOSE] and "pdf" in qt.FILE_FILTER.lower()
+        assert any(t.startswith("va-clinic-fake.txt") for t in labels(win))
+        shot(win, "03-files-imported")
         events.append("imported")
-        click(root, app.START_REVIEW)
+        click(win, app.START_REVIEW)
 
-    def review(root, vault):
-        count = lambda: vault._conn.execute(  # noqa: E731
-            "SELECT count(*) FROM review"
-        ).fetchone()[0]
-        texts = labels(root)
+    def review(win, vault):
+        def count():
+            return vault._conn.execute("SELECT count(*) FROM review").fetchone()[0]
+
+        texts = labels(win)
         assert any(t.startswith("1 of ") for t in texts)
         assert not any("Enter" in t and "Yes" in t for t in texts)
-        shot(root, "04-review-row")
-        while "Summary" not in labels(root):
-            click(root, "Yes")
+        shot(win, "04-review-row")
+        for _ in range(20):  # y confirms one field at a time
+            if win.fr.form_index is None:
+                break
+            win.key_yes()
+            qt.app().processEvents()
+        assert "Summary" in labels(win)
         assert count() == 0  # nothing saved before Confirm all
-        rs = sys.modules["review_session"]
-        (shown,) = [t for t in labels(root) if t.startswith(rs.PHRASE_PROMPT)]
-        (entry,) = widgets(root, tk.Entry)
-        entry.insert(0, shown[slice(len(rs.PHRASE_PROMPT), None)].strip())
-        shot(root, "05-summary")
+        rs = qt.rs
+        shown = win.findChild(QLabel, "phrase_prompt").text()
+        entry = win.findChild(QLineEdit, "phrase")
+        QTest.keyClicks(entry, shown.replace(rs.PHRASE_PROMPT, "", 1).strip())
+        shot(win, "05-summary")
         events.append("confirm")
-        click(root, "Confirm all")
+        click(win, "confirm_all")
 
     code = app.run_gui(
         db, hooks={"start": start, "files": files, "review": review}, kdf=FAST
@@ -170,9 +147,9 @@ def test_launch_pick_file_review_confirm(tmp_path, monkeypatch, quiet_dialogs):
     v = rv.Vault.open(db, bytearray(PW.encode()), g)
     try:
         saved = v._conn.execute("SELECT count(*) FROM review").fetchone()[0]
-        files = v.list_files(bot_id=app.BOT_ID)
+        listed = v.list_files(bot_id=app.BOT_ID)
     finally:
         v.close()
-    assert saved >= 1 and files == [("va-clinic-fake.txt", 3)]
+    assert saved >= 1 and listed == [("va-clinic-fake.txt", 3)]
     for n in ("01-start", "02-files-empty", "03-files-imported", "04-review-row"):
         assert (SHOTS / f"{n}.png").exists()
