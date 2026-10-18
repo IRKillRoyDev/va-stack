@@ -93,6 +93,12 @@ def app_data_home(monkeypatch, app_data_root):
     base = app_data_root / uuid.uuid4().hex
     for k in APP_ENV:
         monkeypatch.setenv(k, str(base))
+    if os.name == "nt":
+        # Path.home() on Windows reads USERPROFILE; pytest's temp folder is
+        # inside the real home there (AppData\Local\Temp), which would make
+        # every tmp_path count as "under the user's home" for safe_path. A
+        # fake per-test home matches Linux, where /tmp is outside home.
+        monkeypatch.setenv("USERPROFILE", str(base))
     return base
 
 
@@ -115,6 +121,14 @@ _OS_CANNOT = {
     "test_r19_defense.py::test_append_target_not_regular_single_link_refused[fifo]": (
         not hasattr(os, "mkfifo"),
         "this OS has no named pipes in the file system (os.mkfifo)",
+    ),
+    "test_r19_defense.py::test_vault_head_write_rechecks_pin": (
+        os.name == "nt",
+        (
+            "Windows cannot rename a folder while the open vault holds files in "
+            "it: Windows' own handle lock blocks that folder swap, so the attack "
+            "this test simulates cannot happen there"
+        ),
     ),
 }
 
