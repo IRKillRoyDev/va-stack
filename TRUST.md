@@ -91,6 +91,12 @@ Qt, the other packages or your computer's system do on their own.
   variable, and it never saves, prints or logs it.
 - The setup scripts never read, move, overwrite or delete your vault or
   record files.
+- Its access log never stores medical or record text, your typed corrections or
+  form answers. Each entry holds only the kind of action, the time, ids, counts,
+  page references, Yes or No answers and flag names, and keyed hashes (HMACs) or
+  fingerprints. The names of imported files and forms are logged too, with names
+  and numbers hidden, so keep medical details out of file names. This is checked
+  by `tests/test_log_no_medical_text.py`.
 
 ## Limits
 
