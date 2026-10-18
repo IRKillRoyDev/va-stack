@@ -121,6 +121,15 @@ def test_trust_doc_lists_what_the_code_touches():
     assert "## Network" in text and "## What it never does" in text
 
 
+def test_trust_doc_states_the_log_claim_with_its_test():
+    """TRUST.md says what the access log holds and names the test proving it."""
+    text = " ".join(TRUST.read_text(encoding="utf-8").split())
+    never = text.split("## What it never does", 1)[1].split("## ", 1)[0]
+    assert "access log" in never and "medical or record text" in never
+    assert "tests/test_log_no_medical_text.py" in never
+    assert (ROOT / "tests/test_log_no_medical_text.py").is_file()
+
+
 def test_readme_has_check_prompt_and_download_check():
     text = README.read_text(encoding="utf-8")
     prompt = _section(text, "## Check this program")
