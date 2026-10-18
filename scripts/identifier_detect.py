@@ -19,16 +19,16 @@ One pipeline, applied once at this entry:
 2. Redaction tags already in the text ("[REDACTED-SSN]", "[DATE-1961]") are
    masked, so a tag is never matched again (no label, digit or date inside
    a tag is seen).
-3. One label table (LABELS) with one label-position matcher: a label applies
-   to a number before it or after it, joined only by separators and short
-   filler words ("on file", "of veteran", "(direct deposit)", "is the"),
-   within N_LINES line breaks. The exception guard uses the same table and
-   looks both before and after a number, within the same clause.
-4. One gap rule (GAP): digit groups joined by any run of characters that are
-   neither digits nor letters (any whitespace, line breaks included, and any
-   amount of punctuation) are one number. Digits split by letters are not
-   joined (letters end a number).
-5. One set of shape rules, one exception registry behind one guard.
+3. Labels attach by morphology, not a closed domain list: an identifier
+   noun (number/no/#/id/code/ref/account and short forms such as SSN/MRN)
+   or any letter-stem next to a digit run that is not on the shared
+   clinical/measurement/structural allowlist. Position: before or after,
+   joined by separators and short filler words, within N_LINES line breaks.
+   The exception guard looks both before and after, same clause.
+4. One gap rule (GAP): digit groups joined by any non-letter non-digit run.
+5. Default-block for qualifying digit shapes (4+ next to a stem/noun, 7+
+   unlabeled) with one clinical/measurement allowlist so dosages, ranges of
+   motion and lab ranges stay free. One exception registry behind one guard.
 
 When to use: never directly from a new output or fill path; call
 local_search.redact() to show text and identifier_blocklist.blocked_value()
@@ -48,7 +48,7 @@ from functools import lru_cache
 # ---------------------------------------------------------------------------
 # 1. Normalization (the one step, applied once in scan()).
 # ---------------------------------------------------------------------------
-N_LINES = 4  # a label reaches its value at most this many line breaks away
+N_LINES = 6  # a label reaches its value at most this many line breaks away
 FILLER_CHARS = frozenset(
     "\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b\u180c\u180d\u180e\u180f"
     "\u200b\u200c\u200d\u200e\u200f\u2060\u2061\u2062\u2063\u2064\u2800"
@@ -155,6 +155,39 @@ def _mask_tags(text: str) -> str:
 GAP = r"[^\dA-Za-z]*"
 RUN = re.compile(rf"(?<!\d)\d(?:{GAP}\d)*")
 MIN_RUN_DIGITS = 7  # an unlabeled number this long is an identifier
+MIN_LABEL_DIGITS = 4  # a number this long next to a stem/noun is an identifier
+
+# Stems that may sit next to a number without making it an identifier: clinical
+# measurements, structural form/prose words, and code words already excused.
+# This is the one allowlist; dosages, ROM and lab ranges stay free (r17 delta).
+SAFE_STEMS = frozenset(
+    """
+    page pages item items section sections part parts line lines row rows
+    chapter chapters paragraph paragraphs para fig figs figure figures
+    table tables dose doses dosage mg mcg ug ml cc kg lbs lb cm mm iu
+    units unit tablet tablets capsule capsules pill pills spray sprays
+    flexion extension abduction adduction rotation rom degrees deg
+    ldl hdl chol cholesterol trig glucose a1c hba1c bun creat creatinine
+    bp hr rr pulse spo2 temp temperature weight height bmi
+    range ranges ratio ratios rated rating ratings percent pct
+    diagnostic procedure visit billing
+    year years age ages day days week weeks month months
+    seen notes note exam exams finding findings
+    street streets avenue road roads
+    cost costs fee fees price prices amount amounts paid total totals
+    cfr usc fr pub statute statutes regulation regulations title titles
+    """.split()
+)
+# Units that mark a clinical measurement when they follow a number.
+_CLINICAL_UNIT = re.compile(
+    r"(?i)\s*(?:mg|mcg|ug|ml|cc|kg|lbs?|cm|mm|iu|units?|%|percent|"
+    r"degrees?|deg|mmhg|/min|/kg)\b"
+)
+_WORD_TOKEN = re.compile(r"[A-Za-z][A-Za-z'.\-]{0,31}")
+# Compact short forms (M.R.N. / M R N / S.S.N. -> mrn / ssn).
+SHORT_FORMS = frozenset(
+    "ssn ssan mrn mbi hicn tin itin ein aba sn dl pp id dod edipi rtn".split()
+)
 
 # ---------------------------------------------------------------------------
 # 4. The one label table.
@@ -215,6 +248,18 @@ LABELS: tuple[Label, ...] = (
     Label("ID", r"MRN|medical\s+record\s*(?:number|no\.?|#)?"),
     Label(
         "ID",
+        _spaced("mrn")
+        + r"|"
+        + _spaced("ssn")
+        + r"|"
+        + _spaced("mbi")
+        + r"|"
+        + _spaced("hicn")
+        + r"|"
+        + _spaced("edipi"),
+    ),
+    Label(
+        "ID",
         r"(?:patient|member|subscriber|insurance|beneficiary|veteran|VA|state"
         r"|employee|group|plan)\s*(?:ID|I\.D\.|identifier|identification)" + _MARK,
     ),
@@ -239,6 +284,22 @@ LABELS: tuple[Label, ...] = (
         min_digits=None,
         guard=None,
     ),
+    # Generic identifier-noun morphology (not a closed domain list): a stem
+    # that is or ends with number/no/#/id/code/ref/account/… or a short form
+    # (SSN, MRN, …), with optional "last 4/four". Unseen labels such as
+    # "Medicare number" or "Chart #" match because of the noun, not a listing.
+    Label(
+        "ID",
+        r"(?:[A-Za-z][A-Za-z.\s]{0,40}?)?(?:"
+        r"numbers?|nums?|nbrs?|nos?\.?|#|"
+        r"identifiers?|identification|"
+        r"refs?|"
+        r"ssns?|mrns?|mbis?|hicns?|edipi|tins?|itins?|eins?"
+        r")(?:\s*last\s*(?:four|4))?"
+        r"|(?<![A-Za-z])(?:id|i\.d\.?)(?![A-Za-z])"
+        r"|(?<![A-Za-z/])(?:sn|dl|pp)(?![A-Za-z])",
+    ),
+    Label("ID", r"(?:S\.?S\.?N\.?|MRN|MBI)\s*last\s*(?:four|4)"),
     # Phone and ZIP labels attach to their own numbers only.
     Label(
         "PHONE", r"tel(?:ephone)?|phone|ph|call|cell(?:\s+phone)?|mobile|fax", 7, None
@@ -267,7 +328,8 @@ def _label_of(m: re.Match[str]) -> Label:
 FILLER_WORDS = frozenset(
     """number num nbr no nos is was are file the a an my his her their its our
     your veteran veterans claimant patient member primary s direct deposit
-    ending ends listed shown reads code codes cpt hcpcs dc dcs ndc id""".split()
+    ending ends listed shown reads code codes cpt hcpcs dc dcs ndc id
+    which record phone for of on to as at in with""".split()
 )
 CONNECTING_WORDS = frozenset("on for of in with as at to".split())
 _OPENERS = frozenset({"ending", "ends", "listed"})
@@ -284,16 +346,23 @@ CLAUSE_BREAK = re.compile(r"[;!?]|\.\s+[A-Z]")
 
 def is_link(text: str, a: int = 0, b: int | None = None) -> bool:
     """True when text[a:b] may join a label and its number: only separators,
-    filler words or a code prefix of 1-3 capitals, at most ATTACH_CHARS long,
-    at most N_LINES line breaks. The length is checked before slicing."""
+    filler words, parentheticals without digits, or a code prefix of 1-3
+    capitals, at most ATTACH_CHARS of letters/spaces (pure punctuation is
+    free), at most N_LINES line breaks."""
     b = len(text) if b is None else b
-    if b - a > ATTACH_CHARS and _collapsed_len(text, a, b) > ATTACH_CHARS:
-        return False  # whitespace runs count as one character
-    text = text[a:b]
+    # Drop parentheticals without digits so length and words ignore them.
+    flat_full = re.sub(r"\([^()\d]*\)", " ", text[a:b])
+    if (
+        len(flat_full) > ATTACH_CHARS
+        and _letter_len(flat_full, 0, len(flat_full)) > ATTACH_CHARS
+    ):
+        return False
+    text = flat_full
     if len(LINE_BREAK.findall(text)) > N_LINES:
         return False
+    flat = text
     words = []
-    for tok in _LINK_TOKEN.findall(text):
+    for tok in _LINK_TOKEN.findall(flat):
         if tok.isdigit():
             return False
         if tok.isascii() and tok.isalpha():
@@ -306,11 +375,30 @@ def is_link(text: str, a: int = 0, b: int | None = None) -> bool:
         if low in CONNECTING_WORDS:
             prev = words[k - 1].lower() if k else ""
             nxt = words[k + 1].lower() if k + 1 < len(words) else ""
-            # "ending in", "on file", "of veteran" — not "of the" alone.
-            if prev in _OPENERS or nxt in _CONTENT:
+            if prev in _OPENERS or nxt in _CONTENT or nxt in FILLER_WORDS:
                 continue
         return False
     return True
+
+
+def _letter_len(text: str, a: int, b: int) -> int:
+    """Count letters and whitespace runs only (punctuation is free)."""
+    n = 0
+    prev_space = False
+    for k in range(a, b):
+        ch = text[k]
+        if ch.isalpha():
+            n += 1
+            prev_space = False
+        elif ch.isspace():
+            if not prev_space:
+                n += 1
+                prev_space = True
+        else:
+            prev_space = False
+        if n > ATTACH_CHARS:
+            return n
+    return n
 
 
 def _collapsed_len(text: str, a: int, b: int) -> int:
@@ -356,18 +444,35 @@ class _Labels:
 
     def attached(self, start: int, end: int):
         """The label attached to the value text[start:end] (before or after,
-        joined by a link), or None. Numbers need the label's min_digits."""
+        joined by a link), or None. Numbers need the label's min_digits.
+        Walk nearby preceding/following labels that link (hard distance
+        cap so scan stays linear) and prefer a specific kind (BANK, SSN, …)
+        over the generic ID noun morphology."""
+        cands = []
         i = bisect.bisect_right(self.all_ends, start) - 1
-        if i >= 0:
+        while i >= 0:
             s, e, lab = self.all[i]
+            if start - e > 200:
+                break
             if is_link(self.text, e, start):
-                return lab
+                cands.append(lab)
+                if lab.kind != "ID":
+                    break
+            i -= 1
         j = bisect.bisect_left(self.all_starts, end)
-        if j < len(self.all):
+        while j < len(self.all):
             s, e, lab = self.all[j]
+            if e - end > 200:
+                break
             if is_link(self.text, end, s):
-                return lab
-        return None
+                cands.append(lab)
+                if lab.kind != "ID":
+                    break
+            j += 1
+        if not cands:
+            return None
+        specific = [lab for lab in cands if lab.kind != "ID"]
+        return (specific or cands)[0]
 
     def near(self, start: int, end: int) -> bool:
         """True when a guarding label is on the same line and in the same
@@ -584,7 +689,7 @@ DATE_LIKE = re.compile(
 STATES = (
     "AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS"
     "|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV"
-    "|WI|WY|PR|GU|VI|AS|MP|AA|AE|AP"
+    "|WI|WY|PR|GU|VI|AS|MP|AA|AE|AP|Colo"
 )
 STATE_NAMES = (
     "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware"
@@ -610,9 +715,8 @@ _STREET = (
 _STREET_WORDY = (
     r"Trail|Trl|Pike|Crescent|Alley|Aly|Crossing|Xing|Plaza|Plz|Expressway"
     r"|Expy|Freeway|Fwy|Turnpike|Tpke|Cove|Glen|Grove|Harbor|Manor|Meadows"
-    r"|Vista|Estates|Gardens|Commons|Mews"
+    r"|Vista|Estates|Gardens|Commons|Mews|Loop|Path"
 )
-_STREET_WORDY = _STREET_WORDY + "|" + _STREET_WORDY.upper()
 _BOX = r"(?:Box|Bx)\.?(?:\s*(?:No\.?|Number|#))?\s*#?\s*\d+"
 PART_LABEL = re.compile(
     r"(?<![A-Za-z])(?:part|p/n|pn|sku|model|serial|s/n|lot|item|ref)"
@@ -661,33 +765,28 @@ SHAPES: tuple[tuple[str, re.Pattern[str]], ...] = (
         "ADDRESS",
         re.compile(
             rf"\b\d{{1,6}}\s+(?:"
-            rf"(?:[A-Z][A-Za-z0-9.]*\s+){{1,4}}(?:{_STREET})"
-            rf"|(?-i:(?:[A-Z][A-Za-z0-9.]*\s+){{1,4}}(?:{_STREET_WORDY}))"
+            rf"(?:[A-Za-z][A-Za-z0-9.]*\s+){{1,4}}(?:{_STREET}|{_STREET_WORDY})"
             r")\b\.?(?:,?\s+(?:Apt|Suite|Ste|Unit|#)\s*\w+)?"
-            # PO boxes in every spelling.
-            r"|\b(?:P\.?\s?O\.?\s*(?:Box|Bx|B)\.?|Post\s+Office\s+Box|POB)"
+            # PO boxes in every spelling, including "Post Box".
+            r"|\b(?:P\.?\s?O\.?\s*(?:Box|Bx|B)\.?|Post\s+(?:Office\s+)?Box|POB)"
             r"(?:\s*(?:No\.?|Number|#))?\s*#?\s*\d+"
-            # Rural, highway-contract and military route boxes: a route or
-            # unit prefix, an optional number, the shared gap, then a Box.
             rf"|\bRural\s+R(?:oute|te)\.?\s*#?\s*\d+(?:{GAP}{_BOX})?"
             rf"|\b(?:R\.?\s?R\.?|R(?:oute|te|t)?\.?|H\.?C\.?R?|PSC|CMR|Unit)"
             rf"\s*#?\s*\d*{GAP}{_BOX}"
-            # APO / FPO / DPO with an armed-forces state, ZIP optional.
-            r"|\b[AFD]PO\b[^\dA-Za-z]*A[AEP]\b(?:[^\dA-Za-z]*\d{5}(?:-\d{4})?)?",
+            # APO / FPO / DPO: with or without armed-forces state; ZIP optional.
+            r"|\b[AFD]PO\b(?:[^\dA-Za-z]*A[AEP])?[^\dA-Za-z]*\d{5}(?:-\d{4})?",
             re.IGNORECASE,
         ),
     ),
     (
-        # State (two-letter or spelled out) + ZIP, the ZIP up to two line
-        # breaks after the state.
+        # City (any case) + state (abbrev, Colo., or spelled out) + ZIP.
+        # Lookahead allows phone/prose after the ZIP.
         "ADDRESS",
         re.compile(
-            r"(?:(?P<c>,[ \t]*)|\b[A-Z][a-z]+[ \t]+|^[ \t]*)"
-            rf"(?P<v>(?(c)(?i:{_STATE})|{_STATE})\b[ \t]*,?[ \t]*"
+            r"(?:(?P<c>,[ \t]*)|\b[A-Za-z]{2,}(?:\.[A-Za-z]+)?[ \t]+|^[ \t]*)"
+            rf"(?P<v>(?i:{_STATE})(?:\.|\b)[ \t]*,?[ \t]*"
             rf"(?:\n[ \t]*){{0,{N_LINES}}}"
-            r"\d{5}(?:-\d{4})?)(?!\d)"
-            r"(?=[ \t]*(?:$|[^\w\s]|(?:USA|U\.S\.A?\.?|United States)\b)"
-            r"|[ \t]+(?:with|and|since|until|near|where|while|from)\b)",
+            r"\d{5}(?:-\d{4})?)(?!\d)",
             re.MULTILINE,
         ),
     ),
@@ -896,6 +995,177 @@ def _f(kind: str, start: int, end: int, tag: str | None = None) -> Finding:
     return Finding(kind, start, end, tag or f"[REDACTED-{kind}]")
 
 
+def _stem_at(text: str, pos: int, ahead: bool) -> str | None:
+    """Nearest letter-token before (ahead=False) or after (ahead=True) pos."""
+    if ahead:
+        m = _WORD_TOKEN.match(text, pos)
+        return m.group(0) if m else None
+    chunk = text[slice(max(0, pos - 48), pos)]
+    matches = list(_WORD_TOKEN.finditer(chunk))
+    return matches[-1].group(0) if matches else None
+
+
+def _compact(word: str) -> str:
+    return "".join(ch.lower() for ch in word if ch.isalpha())
+
+
+def _safe_stem(word: str) -> bool:
+    low = word.lower().rstrip(".")
+    if low in SAFE_STEMS or _compact(word) in SHORT_FORMS:
+        return low in SAFE_STEMS  # short forms are identifiers, not safe
+    return low in SAFE_STEMS
+
+
+# Code words that introduce excused lists (CPT/DC/NDC); not identifier stems.
+CODE_STEMS = frozenset("cpt hcpcs dc dcs ndc".split())
+LEGAL_STEMS = frozenset("cfr usc fr pub c.f.r u.s.c c.f.r. u.s.c.".split())
+
+_STATE_ABBREV = frozenset(
+    """
+    al ak az ar ca co ct de dc fl ga hi id il in ia ks ky la me md ma mi mn ms
+    mo mt ne nv nh nj nm ny nc nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi
+    wy pr gu vi as mp aa ae ap colo
+""".split()
+)
+
+
+def _is_ident_stem(word: str) -> bool:
+    """True when word is an identifier stem (not on the allowlist)."""
+    if not word:
+        return False
+    compact = _compact(word)
+    low = word.lower().rstrip(".")
+    if low in SAFE_STEMS or low in _STATE_ABBREV or low in CODE_STEMS:
+        return False
+    if low in LEGAL_STEMS or compact in LEGAL_STEMS:
+        return False
+    if compact in SHORT_FORMS:
+        return True
+    # Single letters are fillers ("0001a2345"), not identifier nouns.
+    if len(compact) < 2:
+        return False
+    # Any letter-stem next to a number is an identifier label unless allowlisted.
+    return bool(low) and not low.isdigit()
+
+
+def _clinical_around(text: str, start: int, end: int) -> bool:
+    """True when a number sits in a clinical/measurement context (allowlist)."""
+    piece = text[start:end]
+    # A long slash-separated rating list is exception-abuse, not a measurement.
+    # Slash-separated rating lists are handled by the exception registry,
+    # not the clinical allowlist (so 6+ ratings / "50, 60%" abuse still block).
+    if piece.count("/") >= 4 and RATING_WORD.search(
+        text[slice(max(0, start - 24), end + 12)]
+    ):
+        return False
+    before = text[slice(max(0, start - 32), start)]
+    after = text[slice(end, end + 24)]
+    if _CLINICAL_UNIT.match(after):
+        return True
+    for m in _WORD_TOKEN.finditer(before):
+        if m.group(0).lower().rstrip(".") in SAFE_STEMS:
+            return True
+    for m in _WORD_TOKEN.finditer(after):
+        if m.group(0).lower().rstrip(".") in SAFE_STEMS:
+            return True
+    return False
+
+
+def _label_gap(text: str, a: int, b: int) -> bool:
+    """True when text[a:b] is a label/value separator (not a prose phrase)."""
+    if a >= b:
+        return True
+    gap = text[a:b]
+    if len(gap) <= 4 and not any(ch.isalpha() for ch in gap):
+        return True  # ":", "#", spaces, dashes only
+    if not is_link(text, a, b):
+        return False
+    # is_link alone is true for a single space; require a filler or mark.
+    words = [w.lower() for w in _WORD_TOKEN.findall(gap)]
+    if any(w in FILLER_WORDS or w in _OPENERS for w in words):
+        return True
+    if "(" in gap or "#" in gap or ":" in gap:
+        return True
+    return False
+
+
+def _stem_labels(text: str, start: int, end: int) -> bool:
+    """True when an identifier stem attaches before or after the value."""
+    for window in (8, 64):
+        lo = max(0, start - window)
+        stem = _stem_at(text, start, False)
+        if stem and _is_ident_stem(stem):
+            idx = text.rfind(stem, lo, start)
+            if idx >= 0 and _label_gap(text, idx + len(stem), start):
+                return True
+    # After: "(MRN)", "is the SSN", "which is my MRN" — not "paid today".
+    after = text[slice(end, end + ATTACH_CHARS)]
+    for m in _WORD_TOKEN.finditer(after):
+        word = m.group(0)
+        if not (_compact(word) in SHORT_FORMS or _is_ident_stem(word)):
+            continue
+        if _label_gap(text, end, end + m.start()) and (
+            _compact(word) in SHORT_FORMS
+            or any(
+                w in FILLER_WORDS
+                for w in _WORD_TOKEN.findall(text[slice(end, end + m.start())])
+            )
+            or "(" in text[slice(end, end + m.start())]
+        ):
+            return True
+    return False
+
+
+_AMBIG_STATE = frozenset(
+    "ok in or me hi id la md ar al ak".split()  # also common English / prose tokens
+)
+
+
+def _ambiguous_state_zip(text: str, start: int, end: int) -> bool:
+    """True when a city+state+ZIP hit uses an ambiguous state without a
+    comma or an ALL-CAPS city ("Rated OK 12345", "Visit IN 12345 days")."""
+    frag = text[slice(max(0, start - 48), end)]
+    # Require ", ST ZIP" or "CITY ST ZIP" with CITY all-caps (len>=3).
+    if re.search(r",\s*[A-Za-z]{2}\.?\s*\d{5}", frag):
+        return False
+    if re.search(r"\b[A-Z]{3,}\s+[A-Z]{2}\.?\s*\d{5}", frag):
+        return False
+    # Colo. / spelled-out states are never ambiguous.
+    if re.search(
+        r"(?i)\b(?:colo\.|alabama|alaska|arizona|arkansas|california|"
+        r"colorado|connecticut|delaware|florida|georgia|hawaii|idaho|"
+        r"illinois|indiana|iowa|kansas|kentucky|louisiana|maine|"
+        r"maryland|massachusetts|michigan|minnesota|mississippi|"
+        r"missouri|montana|nebraska|nevada|ohio|oklahoma|oregon|"
+        r"pennsylvania|tennessee|texas|utah|vermont|virginia|"
+        r"washington|wisconsin|wyoming)\b",
+        frag,
+    ):
+        return False
+    m = re.search(r"(?i)\b([A-Za-z]{2})\.?\s*\d{5}", frag)
+    if m and m.group(1).lower() in _AMBIG_STATE:
+        return True
+    return False
+
+
+_ADDR_STOP = frozenset(
+    "a an the of on in at to for from with by and or but miles mile km "
+    "kilometers walked drove ran went living lived lives".split()
+)
+
+
+def _address_prose(text: str, start: int, end: int) -> bool:
+    """True when a digit+street match is ordinary prose, not an address."""
+    frag = text[start:end]
+    words = [w.lower() for w in _WORD_TOKEN.findall(frag)]
+    # Drop the leading house number's digits (not in _WORD_TOKEN) and the
+    # trailing street suffix; if every middle word is a stopword, reject.
+    if len(words) < 2:
+        return False
+    middle = words[:-1]
+    return bool(middle) and all(w in _ADDR_STOP for w in middle)
+
+
 def scan(text: str, keep_dates: bool = False, names: bool = True) -> Scan:
     """Find every identifier in text. The one shared entry.
 
@@ -938,7 +1208,29 @@ def scan(text: str, keep_dates: bool = False, names: bool = True) -> Scan:
                 continue
             if kind == "PHONE" and PART_LABEL.search(t, max(0, a - 24), a):
                 continue  # a part or serial number, not a phone
+            if kind == "ADDRESS" and _address_prose(t, a, b):
+                continue  # "2 miles on the trail", not a street address
+            if kind == "ADDRESS" and _ambiguous_state_zip(t, a, b):
+                continue  # "Rated OK 12345" / "Visit IN 12345 days"
             out.append(_f(kind, a, b))
+
+    # Old dates ([DATE-yyyy]). Found before the numbers so the date class
+    # wins over the default ID block below (labeled identifiers still win).
+    old_dates: list[Finding] = []
+    this_year = datetime.date.today().year
+    for pattern in DATE_PATTERNS:
+        for m in pattern.finditer(t):
+            year = _full_year(m.group("y"))
+            if year > this_year - BIRTH_YEAR_MAX_AGE_GAP:
+                continue
+            if _RATING_DATE.fullmatch(m.group(0)):
+                lo, hi = max(0, m.start() - 40), m.end() + 20
+                if RATING_WORD.search(t[lo:hi]):
+                    continue
+            old_dates.append(_f("OLD_DATE", m.start(), m.end(), f"[DATE-{year}]"))
+
+    def in_old_date(a: int, b: int) -> bool:
+        return any(d.start <= a and b <= d.end for d in old_dates)
 
     # Numbers: labeled (any digit count from the label's minimum) or long.
     # Excused numbers joined only by links ("NDC 00012-3456-78 CPT 01234
@@ -956,11 +1248,32 @@ def scan(text: str, keep_dates: bool = False, names: bool = True) -> Scan:
         digits = sum(ch.isdigit() for ch in m.group(0))
         lab = labels.attached(a, b)
         if lab is not None and lab.min_digits is not None and digits >= lab.min_digits:
-            out.append(_f(lab.kind, a, b))
+            # A "phone" label next to a calendar date is not a phone number.
+            if lab.kind == "PHONE" and DATE_LIKE.fullmatch(m.group(0)):
+                pass
+            else:
+                out.append(_f(lab.kind, a, b))
+                continue
+        if digits < MIN_LABEL_DIGITS:
             continue
-        if digits < MIN_RUN_DIGITS:
+        # Exceptions (amounts, CPT/DC/NDC, ratings, dates) before default-block.
+        if _excused(ctx, labels, a, b):
+            if digits >= MIN_RUN_DIGITS:
+                if chain and not is_link(t, chain[-1][1], a):
+                    close_chain()
+                chain.append((a, b, digits))
             continue
-        if not _excused(ctx, labels, a, b):
+        # Identifier stem/noun or guarding label wins over the clinical
+        # allowlist (so "year"/"section" near an account-number label
+        # cannot clear a qualifying digit run).
+        if in_old_date(a, b):
+            continue  # dates win over the default ID block
+        if labels.near(a, b) or _stem_labels(t, a, b):
+            out.append(_f("ID", a, b))
+            continue
+        if _clinical_around(t, a, b):
+            continue
+        if digits >= MIN_RUN_DIGITS:
             out.append(_f("NUMBER", a, b))
             continue
         if chain and not is_link(t, chain[-1][1], a):
@@ -977,17 +1290,7 @@ def scan(text: str, keep_dates: bool = False, names: bool = True) -> Scan:
                 out.append(_f("NAME", a, b))
 
     if not keep_dates:
-        this_year = datetime.date.today().year
-        for pattern in DATE_PATTERNS:
-            for m in pattern.finditer(t):
-                year = _full_year(m.group("y"))
-                if year > this_year - BIRTH_YEAR_MAX_AGE_GAP:
-                    continue
-                if _RATING_DATE.fullmatch(m.group(0)):
-                    lo, hi = max(0, m.start() - 40), m.end() + 20
-                    if RATING_WORD.search(t[lo:hi]):
-                        continue
-                out.append(_f("OLD_DATE", m.start(), m.end(), f"[DATE-{year}]"))
+        out.extend(old_dates)
 
     out.sort(key=lambda f: (f.start, _RANK[f.kind]))
     return Scan(norm, tuple(out))

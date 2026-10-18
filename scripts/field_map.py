@@ -59,6 +59,7 @@ import io
 import json
 import math
 import os
+import secrets
 import re
 import sys
 import unicodedata
@@ -66,7 +67,13 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 from pypdf import PdfReader, PdfWriter
-from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject, NameObject
+from pypdf.generic import (
+    ArrayObject,
+    ByteStringObject,
+    DictionaryObject,
+    IndirectObject,
+    NameObject,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SCHEMAS = _ROOT / "schemas"
@@ -209,6 +216,7 @@ _FORM_ID = re.compile(r"(?:[0-9]{2}[A-Z]{0,2}-)?[0-9]{3,5}[A-Z]{0,3}")
 # Any other VA form: "VA 21-0781", "21-4138". ASCII classes only, matched
 # after identifier_blocklist._clean, so other scripts' digits never pass.
 _ANY_FORM_ID = re.compile(r"(?:VA )?[0-9]{2}-[0-9]{3,5}[A-Z]{0,3}")
+_VA_FORM_PREFIX = re.compile(r"^(?:VA )?(?:10|20|21|22|26|28|40)-")
 # A form field's own name, as VA forms write it: "F[0].#subform[10].SSN1[0]".
 _FIELD_NAME = re.compile(r"[A-Za-z0-9_.#\[\]\\-]+(?: [A-Za-z0-9_.#\[\]\\-]+)*")
 _DATEISH = re.compile(
@@ -385,12 +393,15 @@ def _check_form_id(form_id) -> str:
         sum(ch.isdigit() for ch in form_id) > FORM_ID_DIGITS
     ):
         raise FieldMapError("$.form.id: not shaped like a form number")
-    # blocked_value() calls the real form numbers 20-10206 and 21-10210 BANK;
-    # outside the catalog the closed shape (at most 7 digits, NN-NNNNN) is
-    # the guard, plus the name check.
-    blocked = shape is _FORM_ID and identifier_blocklist.blocked_value(form_id)
-    if blocked or _labeled_name(form_id):
+    # Catalog form numbers stay; a non-catalog id must look like a VA form
+    # prefix (10/20/21/…) and not a phone/ZIP fragment (55-50199).
+    if _labeled_name(form_id):
         raise FieldMapError("$.form.id: looks like an identifier value or a name")
+    if shape is not _FORM_ID and not _VA_FORM_PREFIX.match(form_id):
+        if identifier_blocklist.blocked_value(form_id) is not None:
+            raise FieldMapError("$.form.id: looks like an identifier value or a name")
+        if local_search.identifier_detect.scan(form_id, names=False).findings:
+            raise FieldMapError("$.form.id: looks like an identifier value or a name")
     return form_id
 
 
@@ -404,20 +415,31 @@ def _check_form_name(form_id: str, name):
     return name
 
 
+_INDEX_DIGITS = re.compile(r"\[\d+\]")  # AcroForm path indices, not values
+_VALUE_DIGITS = re.compile(r"\d{4,}")  # a value-shaped run outside indices
+
+
 def check_field_name(name, where: str = "$.form.fields[].name") -> str:
-    """Return a form field's name if it passes the label checks, else raise.
+    """Return a form field's name if it passes the shared gate, else raise.
 
     A field name is the form maker's own text ("F[0].#subform[10].SSN1[0]"),
     so it may hold letters, digits and . _ # [ ] \\ - and single spaces, up to
-    FIELD_NAME_MAX characters, and it must not look like an identifier value
-    (blocked_value) or a labeled name (the label checks). Never echoed.
+    FIELD_NAME_MAX characters. Bracketed path indices are ignored for the
+    check; the rest goes through identifier_detect.scan() (the same detector
+    as values) and a contiguous 4-digit cap, so an identifier-shaped /T cannot
+    enter the request JSON or the consent text. Never echoed.
     When to use: on every field name before it is listed in a request.
     """
     if type(name) is not str or not 1 <= len(name) <= FIELD_NAME_MAX:
         raise FieldMapError(f"{where}: must be a short field name")
     if not _FIELD_NAME.fullmatch(name):
         raise FieldMapError(f"{where}: has characters a field name does not need")
-    if identifier_blocklist.blocked_value(name) is not None:
+    masked = _INDEX_DIGITS.sub("", name)
+    if _VALUE_DIGITS.search(masked):
+        raise FieldMapError(f"{where}: looks like an identifier value")
+    if local_search.identifier_detect.scan(masked, names=True).findings:
+        raise FieldMapError(f"{where}: looks like an identifier value")
+    if identifier_blocklist.blocked_value(masked) is not None:
         raise FieldMapError(f"{where}: looks like an identifier value")
     if _labeled_name(name):
         raise FieldMapError(f"{where}: looks like a person's name")
@@ -635,7 +657,12 @@ def _form_fields(reader: PdfReader) -> tuple[list[dict], int]:
                 )
             else:
                 kind = _FT.get(ft or "", "text")
-            check_field_name(name, f"form field {len(out) + unnamed + 1}")
+            try:
+                check_field_name(name, f"form field {len(out) + unnamed + 1}")
+            except FieldMapError:
+                # Gate: never send an identifier-shaped /T; keep a safe slot name.
+                name = f"field_{len(out) + 1}"
+                check_field_name(name, f"form field {len(out) + unnamed + 1}")
             rect = [float(v) for v in annot["/Rect"]]
             out.append(
                 {
@@ -758,6 +785,157 @@ def _scrub(node, seen: set) -> None:
             stack.extend(obj)
 
 
+def _pdf_string_text(obj) -> str:
+    """Decode a PDF string object to text for scanning (never logged)."""
+    try:
+        if hasattr(obj, "original_bytes"):
+            raw = obj.original_bytes
+            try:
+                return raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return raw.decode("latin-1", "replace")
+        return str(obj)
+    except Exception:
+        return ""
+
+
+def iter_form_strings(data: bytes):
+    """Yield (where, text) for every string the shared detector must see.
+
+    Covers: extracted page text, every PDF string object (metadata already
+    stripped still scanned if present), field values/defaults if any remain,
+    but not trailer /ID (verify checks the closed generated format). One generator used
+    by form_identifier_hits (sanitize and verify share it).
+    """
+    reader = _reader(data)
+    for n, page in enumerate(reader.pages, 1):
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            text = ""
+        if text.strip():
+            yield (f"page {n} text", text)
+    seen: set = set()
+    stack = [reader.trailer]
+    while stack:
+        obj = stack.pop()
+        if isinstance(obj, IndirectObject):
+            key = (obj.idnum, obj.generation)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                obj = obj.get_object()
+            except Exception:
+                continue
+        if isinstance(obj, DictionaryObject):
+            for k, v in obj.items():
+                if k == "/Contents":
+                    continue  # page text already extracted above
+                if k == "/ID":
+                    continue  # closed format checked in verify_sanitized
+                stack.append(v)
+        elif isinstance(obj, ArrayObject):
+            stack.extend(obj)
+        else:
+            text = _pdf_string_text(obj)
+            if text.strip() and any(ch.isalpha() or ch.isdigit() for ch in text):
+                yield ("string", text)
+
+
+_PDF_DATE = re.compile(r"^D:\d{8,}")
+
+
+def _scannable_form_text(text: str) -> bool:
+    """Skip pure geometry numbers and PDF date stamps; scan real text."""
+    t = text.strip()
+    if not t or _PDF_DATE.match(t):
+        return False
+    if any(ch.isalpha() for ch in t):
+        return True
+    # Digit-only / ID bytes: still scan when shaped like an identifier.
+    return bool(re.search(r"\d{3}[-/ ]\d{2}[-/ ]\d{4}|\d{7,}", t))
+
+
+def form_identifier_hits(data: bytes) -> list[str]:
+    """Kinds the shared detector finds in any form string. One function for
+    sanitize_blank_form and verify_sanitized — no second copy of the rules."""
+    kinds: set[str] = set()
+    detect = local_search.identifier_detect
+    for _where, text in iter_form_strings(data):
+        if not _scannable_form_text(text):
+            continue
+        for f in detect.scan(text, names=True).findings:
+            kinds.add(f.kind)
+    return sorted(kinds)
+
+
+# Closed trailer /ID shape written by sanitize and required by verify.
+# Exactly two byte strings, each exactly 16 bytes from [A-Za-z]. No other
+# form is accepted — planted identifiers (even with a non-printable byte
+# mixed in) fail the format check rather than relying on a scan heuristic.
+_FILE_ID_LEN = 16
+_FILE_ID_ALPHABET = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+_FILE_ID_PART_RE = re.compile(rb"^[A-Za-z]{16}$")
+
+
+def _file_id_part_bytes(part) -> bytes | None:
+    """Return raw bytes for one /ID element, or None if it is not byte content.
+
+    pypdf may re-read a letter-only ByteStringObject as TextStringObject; both
+    are accepted when original_bytes match the closed [A-Za-z]{16} shape.
+    Numbers, names, and other non-byte objects return None.
+    """
+    if isinstance(part, (bytes, bytearray)) and not isinstance(part, str):
+        return bytes(part)
+    if isinstance(part, ByteStringObject):
+        return bytes(part.original_bytes if hasattr(part, "original_bytes") else part)
+    # TextStringObject / similar: only when original bytes are available.
+    raw = getattr(part, "original_bytes", None)
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw)
+    getter = getattr(part, "get_original_bytes", None)
+    if callable(getter):
+        try:
+            raw = getter()
+        except Exception:
+            raw = None
+        if isinstance(raw, (bytes, bytearray)):
+            return bytes(raw)
+    return None
+
+
+def is_generated_file_id(ident) -> bool:
+    """True when ident is exactly the closed /ID shape _new_file_id() writes."""
+    try:
+        parts = list(ident)
+    except TypeError:
+        return False
+    if len(parts) != 2:
+        return False
+    for part in parts:
+        raw = _file_id_part_bytes(part)
+        if raw is None or _FILE_ID_PART_RE.fullmatch(raw) is None:
+            return False
+    return True
+
+
+def _new_file_id() -> ArrayObject:
+    """Fresh trailer /ID pair in the closed letter-only format; never from content."""
+
+    def _part() -> bytes:
+        return bytes(
+            _FILE_ID_ALPHABET[b % 52] for b in secrets.token_bytes(_FILE_ID_LEN)
+        )
+
+    return ArrayObject(
+        [
+            ByteStringObject(_part()),
+            ByteStringObject(_part()),
+        ]
+    )
+
+
 def sanitize_blank_form(data: bytes) -> bytes:
     """Return a sanitized copy of a blank form, or raise FieldMapError.
 
@@ -767,9 +945,9 @@ def sanitize_blank_form(data: bytes) -> bytes:
     (/AP, /AS) and every other annotation are dropped, and so are the
     document /Info, XMP /Metadata, /PieceInfo, scripts (/AA, /OpenAction,
     /JS, /Names JavaScript), attachments (/EmbeddedFiles, /AF) and links.
-    The copy is read back and checked by verify_sanitized(); a copy that
-    fails is refused, never sent. Page text drawn into the content stays
-    (it is the blank form's printing); see PreparedRequest.warnings.
+    The trailer /ID is regenerated. Page content that the shared detector
+    flags is dropped (blank page kept for layout). verify_sanitized() applies
+    the same detection; a copy that fails is refused, never sent.
     When to use: inside prepare_request(); exposed for tests.
     """
     reader = _reader(data)
@@ -778,11 +956,21 @@ def sanitize_blank_form(data: bytes) -> bytes:
         for page in reader.pages:
             for key in [k for k in page if k not in PAGE_KEEP]:
                 del page[key]
+            # Drop content streams whose text carries identifiers.
+            try:
+                text = page.extract_text() or ""
+            except Exception:
+                text = ""
+            hits = local_search.identifier_detect.scan(text, names=True).findings
+            if text.strip() and hits:
+                if "/Contents" in page:
+                    del page["/Contents"]
             writer.add_page(page)
         _scrub(writer._root_object, set())
         for key in [k for k in writer._root_object if k not in ("/Type", "/Pages")]:
             del writer._root_object[key]
         writer.metadata = None
+        writer._ID = _new_file_id()
         out = io.BytesIO()
         writer.write(out)
     except FieldMapError:
@@ -800,8 +988,11 @@ def verify_sanitized(data: bytes) -> None:
     Checks every object in the file (not only the reachable ones): no
     FORBIDDEN_KEYS, no annotation, file or metadata object, a trailer with
     only /Size, /Root and /ID, a catalog with only /Type and /Pages, pages
-    with only PAGE_KEEP keys, and one revision (one %%EOF, one startxref).
-    Errors name the rule, never the content found.
+    with only PAGE_KEEP keys, one revision (one %%EOF, one startxref), and
+    no identifier text in any string (form_identifier_hits — the same
+    function sanitize_blank_form uses), and a trailer /ID that matches
+    the closed generated format (is_generated_file_id). Errors name the
+    rule, never the content found.
     When to use: on the copy sanitize_blank_form() made, and again in
     check_outbound() on the bytes that leave.
     """
@@ -814,6 +1005,8 @@ def verify_sanitized(data: bytes) -> None:
         trailer = reader.trailer
         if set(trailer) - {"/Size", "/Root", "/ID"}:
             raise FieldMapError("form: the sanitized copy has extra trailer keys")
+        if "/ID" not in trailer or not is_generated_file_id(trailer["/ID"]):
+            raise FieldMapError("form: the sanitized copy has a bad file id")
         root = trailer["/Root"].get_object()
         if set(root) - {"/Type", "/Pages"}:
             raise FieldMapError("form: the sanitized copy has extra catalog keys")
@@ -838,6 +1031,8 @@ def verify_sanitized(data: bytes) -> None:
                     raise FieldMapError(
                         "form: the sanitized copy still has a forbidden object"
                     )
+        if form_identifier_hits(data):
+            raise FieldMapError("form: the sanitized copy still has identifier text")
     except FieldMapError:
         raise
     except Exception as exc:
