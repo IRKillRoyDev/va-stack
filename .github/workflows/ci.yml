@@ -68,8 +68,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install xvfb and tkinter
-        run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk libegl1 libxkbcommon0
+      - name: Install xvfb and the Qt system libraries (PySide6)
+        run: sudo apt-get update && sudo apt-get install -y xvfb libegl1 libxkbcommon0
       - name: Install pinned dependencies
         run: pip install -r requirements-dev.txt
       - name: va-stack entry point installs
@@ -80,7 +80,7 @@ jobs:
         env:
           VA_STACK_SHOTS: ${{ github.workspace }}/va-stack-shots
         run: |
-          python -c "import tkinter; print('tk', tkinter.TkVersion)"
+          python -c "import PySide6.QtPdfWidgets, PySide6; print('PySide6', PySide6.__version__)"
           set -o pipefail
           xvfb-run -a pytest -v -rs tests/test_gui_headless.py tests/test_app_gui.py tests/test_qt_gui.py | tee gui.txt
           grep -q "12 passed" gui.txt
@@ -115,7 +115,7 @@ jobs:
           source .venv/bin/activate
           python -m pip show sqlcipher3
           python -m pytest -v -s -rs tests/test_encryption.py
-      - name: Pytest (window tests skip without a display)
+      - name: Pytest (PySide6 window tests run offscreen)
         shell: bash
         env:
           VA_STACK_SHOTS: ${{ github.workspace }}/va-stack-shots
@@ -161,7 +161,7 @@ jobs:
           python -m pip show sqlcipher3
           python -m pytest -v -s -rs tests/test_encryption.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
-      - name: Pytest (window tests skip without a display)
+      - name: Pytest (PySide6 window tests run offscreen)
         shell: pwsh
         env:
           VA_STACK_SHOTS: ${{ github.workspace }}/va-stack-shots
