@@ -1,0 +1,28 @@
+{
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2
+  },
+  "json": {
+    "formatter": {
+      "expand": "always"
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "skills/proposed-issues/forms.json",
+        "skills/proposed-issues/rating-criteria.json",
+        "tests/fixtures/ecfr-part4-ratings-2026-10-14.json",
+        "tests/fixtures/va-forms/*.json",
+        "tests/fixtures/submission-*.json",
+        "tests/fixtures/submission-tracks/*.json",
+        "tests/fixtures/proposed-issues-input-fake.json",
+        "examples/sample-input.json"
+      ],
+      "formatter": {
+        "indentWidth": 1
+      }
+    }
+  ]
+}
