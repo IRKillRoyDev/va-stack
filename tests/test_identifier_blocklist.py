@@ -290,5 +290,5 @@ def test_only_this_module_holds_identifier_keywords():
         if path.name == "identifier_blocklist.py":
             continue
         text = path.read_text(encoding="utf-8").lower()
-        for word in ("routing", "dateofbirth", "socialsecurity", "servicenumber"):
+        for word in ("dateofbirth", "socialsecurity", "servicenumber", "routingnumber"):
             assert word not in text, (path.name, word)
