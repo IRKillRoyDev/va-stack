@@ -23,6 +23,7 @@ Policy (r19, class 3): PIN-AND-RECHECK.
 
 from __future__ import annotations
 
+import errno
 import os
 import secrets
 import stat
@@ -245,9 +246,19 @@ def confine(root, dest, *, create: bool = True) -> tuple[PinnedRoot, str]:
     root = pin_root(root, create=create)
     text = _as_text(dest, "destination")
     if os.path.isabs(text) or PureWindowsPath(text).drive:
-        if "\\" in text or PureWindowsPath(text).drive:
-            raise SafePathError("absolute path refused")
-        if ".." in text.split("/"):
+        if os.name == "nt":
+            # Only a plain "X:\\..." path; UNC, device (\\?\, \\.\) and
+            # drive-relative ("X:name") forms are refused.
+            win = PureWindowsPath(text)
+            drive = win.drive
+            if not (len(drive) == 2 and drive[1] == ":" and win.root):
+                raise SafePathError("absolute path refused")
+            segments = win.parts[1:]
+        else:
+            if "\\" in text or PureWindowsPath(text).drive:
+                raise SafePathError("absolute path refused")
+            segments = text.split("/")
+        if ".." in segments:
             raise SafePathError("path traversal refused")
         p = Path(os.path.abspath(text))
         name = check_name(p.name)
@@ -255,6 +266,9 @@ def confine(root, dest, *, create: bool = True) -> tuple[PinnedRoot, str]:
             parent_real = p.parent.resolve(strict=True)
         except OSError as exc:
             raise SafePathError("destination folder does not exist") from exc
+        # Accepted only after resolution: same drive as the root, then inside it.
+        if os.path.normcase(parent_real.drive) != os.path.normcase(root.path.drive):
+            raise SafePathError("destination is on another drive")
         if not parent_real.is_relative_to(root.path):
             raise SafePathError("destination is outside the allowed root")
         segs = list(parent_real.relative_to(root.path).parts)
@@ -293,6 +307,8 @@ def _open_in(root: PinnedRoot, name: str, flags: int, mode: int = 0o600) -> int:
     root.recheck()  # no dir_fd (Windows): path re-check plus O_EXCL
     target = root.path / name
     if _is_link(target):
+        if flags & os.O_EXCL:  # as O_EXCL | O_NOFOLLOW: the name is taken
+            raise FileExistsError(errno.EEXIST, "a link holds this name", str(target))
         raise SafePathError("destination is a symlink")
     return os.open(target, flags, mode)
 
