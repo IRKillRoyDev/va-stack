@@ -190,10 +190,17 @@ class ReviewSession:
             view["buttons"] = ["Save my text", "Back"]
         return view
 
-    def confirm_all(self, vault, bot_id: str, phrase: str | None = None) -> dict:
+    def confirm_all(
+        self,
+        vault,
+        bot_id: str,
+        phrase: str | None = None,
+        fields: list[dict] | None = None,
+    ) -> dict:
         """Save every answer to the vault in one step (Confirm all).
 
         The user must type back confirm_phrase (case and spacing ignored).
+        fields (FieldReview only) are logged by hash in the same step.
         """
         if self.screen != "summary" or not self.summary()["can_confirm"]:
             raise ValueError("answer every row (Yes, or No with your text) first")
@@ -206,9 +213,243 @@ class ReviewSession:
             {"row_id": r["row_id"], **self.answers[r["row_id"]]} for r in self.rows
         ]
         token = vault._issue_confirm_token(bot_id)
-        out = vault.save_reviews(items, bot_id=bot_id, confirm_token=token)
+        if fields is None:
+            out = vault.save_reviews(items, bot_id=bot_id, confirm_token=token)
+        else:
+            out = vault.save_reviews(
+                items, bot_id=bot_id, confirm_token=token, fields=fields
+            )
         self.screen = "done"
         return out
+
+
+# Red flags a field can carry (shown in red in the review window).
+RED_FLAGS = (pi.FLAG_NEGATIVE, pi.FLAG_WIDENED, pi.FLAG_BOUNDARY, pi.USER_UPDATED)
+NOT_CONFIRMED = "Not confirmed yet."
+EDITED = f"Changed by you; saved as {pi.USER_UPDATED} after Confirm all."
+DRAFT_VERSION = 1
+
+
+def _same(a: str, b: str) -> bool:
+    return " ".join((a or "").split()) == " ".join((b or "").split())
+
+
+class FieldReview:
+    """Per-field review (the PySide6 window) on top of ReviewSession.
+
+    When to use: build it from a report; the window draws forms and fields
+    and calls confirm_field()/next()/back()/edit()/confirm_all(). One form
+    per claim row, one field per cited quote (redacted text). The rules stay
+    in ReviewSession: a form whose fields are all confirmed unchanged is a
+    Yes; with an edited field it is a No with the edited text (redacted by
+    clean_correction, flagged USER_UPDATED); nothing is written to the
+    vault before Confirm all with the typed phrase, except Save for later,
+    which keeps this state (already redacted) in the encrypted vault.
+    """
+
+    def __init__(self, report: dict) -> None:
+        self.session = ReviewSession(report)
+        self.forms: list[dict] = []
+        self.state: dict[str, dict] = {}
+        for row in self.session.rows:
+            fields = []
+            for k, link in enumerate(row["links"]):
+                flags = [f for f in link["flags"] if f in RED_FLAGS]
+                if row.get("user_update") and k == 0:
+                    flags.append(pi.USER_UPDATED)
+                field = {
+                    "id": f"{row['row_id']}:{k}",
+                    "label": f"Quote {k + 1}",
+                    "value": link["quote"],
+                    "context": link["context"]["text"],
+                    "link": link["link"],
+                    "page": link["page"],
+                    "line": link["line"],
+                    "date": link.get("date"),
+                    "flags": flags,
+                }
+                fields.append(field)
+                self.state[field["id"]] = {
+                    "value": link["quote"],
+                    "locked": False,
+                    "changed": False,
+                }
+            self.forms.append(
+                {"row_id": row["row_id"], "title": row["condition"], "fields": fields}
+            )
+        self._by_id = {
+            f["id"]: (i, f) for i, fm in enumerate(self.forms) for f in fm["fields"]
+        }
+
+    # ---- where we are ------------------------------------------------
+    @property
+    def form_index(self) -> int | None:
+        """Index of the form on screen, or None on the summary."""
+        if self.session.screen in ("step", "type") and self.forms:
+            return self.session.index
+        return None
+
+    def issues(self, field_id: str) -> list[str]:
+        """The issue list shown under one field."""
+        _i, field = self._by_id[field_id]
+        st = self.state[field_id]
+        out = list(field["flags"])
+        if st["changed"] and pi.USER_UPDATED not in out:
+            out.append(pi.USER_UPDATED)
+        if st["changed"]:
+            out.append(EDITED)
+        if not out:
+            out.append(pi.NO_FLAG_NOTE)
+        if not st["locked"]:
+            out.append(NOT_CONFIRMED)
+        return out
+
+    def red_flags(self, index: int) -> list[tuple[str, str]]:
+        """(field id, flag) for red flags on fields not yet confirmed."""
+        return [
+            (f["id"], flag)
+            for f in self.forms[index]["fields"]
+            if not self.state[f["id"]]["locked"]
+            for flag in f["flags"]
+        ]
+
+    # ---- actions -----------------------------------------------------
+    def confirm_field(self, field_id: str, value: str) -> dict:
+        """Confirm one field (the Confirm button): lock it and keep its value.
+
+        An edited value is redacted first; text with nothing real left is
+        refused and the field stays open. When the last field of the form
+        is confirmed, the form is answered through ReviewSession (Yes, or
+        No with the edited text) and the session moves on.
+        """
+        index, field = self._by_id[field_id]
+        st = self.state[field_id]
+        if self.form_index != index or self.session.screen != "step":
+            raise ValueError("this field is not on the form on screen")
+        if st["locked"]:
+            raise ValueError("this field is already confirmed")
+        warning = None
+        if _same(value, field["value"]):
+            st.update(value=field["value"], changed=False)
+        else:
+            clean, _counts, warning = pi.records_vault.clean_correction(value)
+            if not clean:
+                return {"locked": False, "warning": warning, "form_done": False}
+            st.update(value=clean, changed=True)
+        st["locked"] = True
+        form = self.forms[index]
+        done = all(self.state[f["id"]]["locked"] for f in form["fields"])
+        if done:
+            edited = [
+                self.state[f["id"]]["value"]
+                for f in form["fields"]
+                if self.state[f["id"]]["changed"]
+            ]
+            if edited:
+                self.session.press("No")
+                out = self.session.type_text(" ".join(edited))
+                warning = warning or out["warning"]
+            else:
+                self.session.press("Yes")
+        return {"locked": True, "warning": warning, "form_done": done}
+
+    def next(self) -> None:
+        """Go to the next form (the window warns first if red flags remain)."""
+        self.session.press("Next")
+
+    def back(self) -> None:
+        self.session.press("Back")
+
+    def edit(self, index: int) -> None:
+        """From the summary, reopen one form; its fields unlock."""
+        self.session.edit(index)
+        for f in self.forms[index]["fields"]:
+            self.state[f["id"]]["locked"] = False
+
+    def field_items(self) -> list[dict]:
+        """What Confirm all logs per field (the vault keeps only hashes)."""
+        return [
+            {
+                "field": f["id"],
+                "row_id": form["row_id"],
+                "old": f["value"],
+                "new": self.state[f["id"]]["value"],
+                "changed": self.state[f["id"]]["changed"],
+                "link": f["link"],
+            }
+            for form in self.forms
+            for f in form["fields"]
+        ]
+
+    def confirm_all(self, vault, bot_id: str, phrase: str | None = None) -> dict:
+        """ReviewSession.confirm_all (typed phrase), plus the field log."""
+        return self.session.confirm_all(
+            vault, bot_id, phrase=phrase, fields=self.field_items()
+        )
+
+    # ---- save for later ----------------------------------------------
+    def save_for_later(self, vault, bot_id: str, pending: dict | None = None) -> None:
+        """Keep the unfinished review in the encrypted vault only.
+
+        pending holds typed but not yet confirmed field text; it is
+        redacted before it is kept. No review answer is written.
+        """
+        fields = {}
+        for fid, st in self.state.items():
+            entry = dict(st)
+            typed = (pending or {}).get(fid)
+            if typed is not None and not st["locked"]:
+                _i, field = self._by_id[fid]
+                if _same(typed, field["value"]):
+                    entry.update(value=field["value"], changed=False)
+                else:
+                    clean = pi.records_vault.clean_correction(typed)[0]
+                    if clean:
+                        entry.update(value=clean, changed=True)
+            fields[fid] = entry
+        state = {
+            "version": DRAFT_VERSION,
+            "row_ids": [fm["row_id"] for fm in self.forms],
+            "fields": fields,
+        }
+        vault.save_review_draft(state, bot_id=bot_id)
+
+    def restore(self, vault, bot_id: str) -> bool:
+        """Load a saved-for-later state for this same report (True if used).
+
+        Confirmed fields are confirmed again through confirm_field(), so the
+        same rules apply; a draft for another report is ignored.
+        """
+        state = vault.load_review_draft(bot_id=bot_id)
+        if (
+            not isinstance(state, dict)
+            or state.get("version") != DRAFT_VERSION
+            or state.get("row_ids") != [fm["row_id"] for fm in self.forms]
+        ):
+            return False
+        saved = state.get("fields") or {}
+        for index, form in enumerate(self.forms):
+            self.session.index, self.session.screen = index, "step"
+            for f in form["fields"]:
+                entry = saved.get(f["id"]) or {}
+                value = str(entry.get("value") or f["value"])
+                if entry.get("locked"):
+                    self.confirm_field(f["id"], value)
+                elif entry.get("changed"):
+                    self.state[f["id"]].update(value=value, changed=True)
+        first = next(
+            (
+                i
+                for i, fm in enumerate(self.forms)
+                if fm["row_id"] not in self.session.answers
+            ),
+            None,
+        )
+        if first is None:
+            self.session.screen = "summary"
+        else:
+            self.session.index, self.session.screen = first, "step"
+        return True
 
 
 def run_cli(report: dict, vault, bot_id: str, input_fn=input, say=print) -> int:

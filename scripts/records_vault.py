@@ -290,7 +290,11 @@ CREATE TABLE IF NOT EXISTS review (
 CREATE TABLE IF NOT EXISTS file_feedback (
     id INTEGER PRIMARY KEY CHECK (id = 1), missing TEXT NOT NULL,
     missed_pii TEXT NOT NULL, ts TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS review_draft (
+    id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL, ts TEXT NOT NULL);
 """
+# A saved-for-later review state larger than this is refused.
+DRAFT_MAX = 1_000_000
 # Flag on a row whose reading the user replaced with their own typed text.
 USER_UPDATED = "USER_UPDATED"
 REVIEW_ANSWERS = ("yes", "no")
@@ -748,7 +752,11 @@ class Vault:
         self._report_rows = frozenset(row_ids)
 
     def save_reviews(
-        self, items: list[dict], bot_id: str, confirm_token: str | None = None
+        self,
+        items: list[dict],
+        bot_id: str,
+        confirm_token: str | None = None,
+        fields: list[dict] | None = None,
     ) -> dict:
         """Save a whole confirmed review at once (the Confirm all step).
 
@@ -760,6 +768,12 @@ class Vault:
         error everything is rolled back, including the log head. The
         original report is never changed. Code in the same Python process
         can still reach these internals (see SAFETY.md).
+
+        fields (from the per-field review window) are {"field", "row_id",
+        "old", "new", "changed", "link"}; each gets one field_confirmed
+        entry in the same transaction holding keyed HMACs of the old and new
+        value, changed-by-user, the time, the page link and the source-page
+        fingerprint, never the text. A saved-for-later draft is removed.
         """
         self._check_open()
         bot_id = self._bot(bot_id)
@@ -777,7 +791,11 @@ class Vault:
                         item["row_id"], item["answer"], item.get("text"), bot_id=bot_id
                     )
                 )
+            for item in fields or ():
+                self._log_field(item, bot_id)
             self._log(bot_id, "review_confirmed_all", {"rows": len(items)})
+            if self._conn.execute("DELETE FROM review_draft").rowcount:
+                self._log(bot_id, "review_draft_cleared", {})
             self._conn.execute("COMMIT")
         except Exception:
             self._conn.execute("ROLLBACK")
@@ -793,6 +811,89 @@ class Vault:
             "warnings": [r["warning"] for r in results if r["warning"]],
             "results": results,
         }
+
+    def _log_field(self, item: dict, bot_id: str) -> None:
+        """One field_confirmed entry; only from inside save_reviews()."""
+        if not self._in_confirm:
+            raise VaultError("fields are logged only by Confirm all")
+        row_id = item.get("row_id")
+        if row_id not in self._report_rows:
+            raise VaultError("row is not in the current report")
+        field = str(item.get("field") or "")
+        if not field.startswith(f"{row_id}:") or len(field) > ROW_ID_MAX + 8:
+            raise VaultError("bad field id")
+        self._log(
+            bot_id,
+            "field_confirmed",
+            {
+                "field": field,
+                "row_id": row_id,
+                "old_value_hmac": self._mac(str(item.get("old") or "")),
+                "new_value_hmac": self._mac(str(item.get("new") or "")),
+                "changed_by_user": bool(item.get("changed")),
+                "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "page_ref": item["link"],
+                "page_fingerprint": self.page_fingerprint(item["link"]),
+            },
+        )
+
+    def page_fingerprint(self, link: str) -> str:
+        """Keyed HMAC of one stored record page (the source-page fingerprint).
+
+        When to use: in field log entries, so a later check can tell the
+        page a field came from is unchanged without storing its text.
+        Raises VaultError for a bad link or a missing page. Not logged.
+        """
+        self._check_open()
+        m = LINK_RE.fullmatch(link or "")
+        row = None
+        if m is not None:
+            row = self._conn.execute(
+                "SELECT r.text FROM files f JOIN records r ON r.file = f.file"
+                " WHERE f.record_id = ? AND r.page = ?",
+                (m.group("rid"), int(m.group("page"))),
+            ).fetchone()
+        if row is None:
+            raise VaultError("no such record page")
+        return self._mac("page\x1f" + row[0])
+
+    def save_review_draft(self, state: dict, bot_id: str) -> None:
+        """Keep an unfinished review (Save for later) in the encrypted vault.
+
+        When to use: only from review_session.FieldReview.save_for_later().
+        Replaces any earlier draft. The state holds field values that were
+        already redacted; no review answer is written (that stays with
+        Confirm all). Logged with counts and a keyed HMAC only.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        text = json.dumps(state, sort_keys=True)
+        if len(text) > DRAFT_MAX:
+            raise VaultError("saved review is too large")
+        fields = state.get("fields", {}) if isinstance(state, dict) else {}
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self._conn.execute(
+            "INSERT OR REPLACE INTO review_draft VALUES (1,?,?)", (text, ts)
+        )
+        self._log(
+            bot_id,
+            "review_saved_for_later",
+            {
+                "fields": len(fields),
+                "locked": sum(bool(f.get("locked")) for f in fields.values()),
+                "hmac": self._mac(text),
+            },
+        )
+
+    def load_review_draft(self, bot_id: str) -> dict | None:
+        """Return the saved-for-later review state, or None. Logged."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        row = self._conn.execute(
+            "SELECT state FROM review_draft WHERE id = 1"
+        ).fetchone()
+        self._log(bot_id, "review_draft_read", {"found": row is not None})
+        return None if row is None else json.loads(row[0])
 
     def get_review(self, row_id: str, bot_id: str) -> dict | None:
         """Return the stored answer for a row, or None if unreviewed.
