@@ -11,7 +11,6 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,10 +31,10 @@ def test_pyside6_pinned_in_requirements():
 
 
 def test_pyside6_pinned_in_pyproject():
-    deps = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"][
-        "dependencies"
-    ]
-    assert {_norm(d) for d in deps} >= {_norm(p) for p in PINS}
+    text = (ROOT / "pyproject.toml").read_text()
+    deps = text.split("dependencies = [", 1)[1].split("]", 1)[0]
+    for pin in PINS:
+        assert f'"{pin}"' in deps, pin
 
 
 def test_no_full_pyside6_or_pymupdf():
