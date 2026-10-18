@@ -48,6 +48,7 @@ def _load(name):
 
 field_map = _load("field_map")
 fill_engine = _load("fill_engine")
+request_ledger = _load("request_ledger")
 
 
 class ConvertError(ValueError):
@@ -151,22 +152,35 @@ def _merge(original: bytes, entries, names) -> bytes:
     return out.getvalue()
 
 
-def convert(source, raw_map, request, *, ask) -> ConvertResult | None:
+def convert(source, raw_map, request, *, ask, ledger=None) -> ConvertResult | None:
     """Write "<name> fillable.pdf" with the mapped fields, after a True answer.
 
     Returns None (and writes nothing) unless ask(prompt_text(...)) returns
-    exactly True. Raises ConvertError for a form that already has fields or
-    does not match the request, and field_map.FieldMapError for a bad map,
-    both before asking.
+    exactly True. Before asking, it raises field_map.FieldMapError for a bad
+    map (including one with no form_sha256), and ConvertError for a form that
+    already has fields, a map whose request id (form_sha256) is not the
+    stored request_ledger entry for this form's original bytes (first check),
+    or pages that do not match the request's page count and sizes (second
+    check). ledger defaults to request_ledger.Ledger() in the app data folder.
     """
     source = Path(source)
+    ledger = ledger if ledger is not None else request_ledger.Ledger()
     original = source.read_bytes()
     reader = field_map._reader(original)
     if reader.get_fields():
         raise ConvertError("this form already has form fields; fill it instead")
-    if field_map._page_sizes(original) != request["form"]["page_sizes"]:
-        raise ConvertError("the field map was made for another form")
     parsed = field_map.parse_field_map(raw_map, request)
+    stored = ledger.request_id(hashlib.sha256(original).hexdigest())
+    if stored is None or parsed["form_sha256"] != stored:
+        raise ConvertError(
+            "the field map does not answer the request sent for this form"
+        )
+    sizes = field_map._page_sizes(original)
+    if (
+        len(sizes) != request["form"]["page_count"]
+        or sizes != request["form"]["page_sizes"]
+    ):
+        raise ConvertError("the field map was made for another form")
     entries = [e for e in parsed["fields"] if "field" not in e]
     if not entries:
         raise ConvertError("the field map places no fields")

@@ -1125,10 +1125,16 @@ class PreparedRequest:
         "_answer",
         "_released",
         "_fields_json",
+        "_source_sha256",
+        "_ledger",
     )
 
-    def __init__(self, payload, data, *, flat, warnings, confirm):
+    def __init__(
+        self, payload, data, *, flat, warnings, confirm, source_sha256=None, ledger=None
+    ):
         self._payload = payload
+        self._source_sha256 = source_sha256
+        self._ledger = ledger
         self._fields_json = json.dumps(payload["form"]["fields"], sort_keys=True)
         self._bytes = data
         self._flat = flat
@@ -1229,12 +1235,23 @@ class PreparedRequest:
         if fields != self._fields_json:
             raise FieldMapError("consent: the field list changed after it was shown")
         check_outbound(self._payload, self._bytes)
+        if self._ledger is not None:
+            # Local only: {original form hash -> request id}. The request id is
+            # form.sha256, already in the payload; nothing new is sent.
+            try:
+                self._ledger.record(
+                    self._source_sha256, self._payload["form"]["sha256"]
+                )
+            except (OSError, ValueError) as exc:
+                raise FieldMapError(
+                    "ledger: the request could not be recorded"
+                ) from exc
         self._released = True
         return copy.deepcopy(self._payload), self._bytes
 
 
 def prepare_request(
-    form_pdf: Path, *, form_id: str, names_source, bot_id: str
+    form_pdf: Path, *, form_id: str, names_source, bot_id: str, ledger=None
 ) -> PreparedRequest:
     """Check and prepare the outbound field-map request; release nothing.
 
@@ -1247,6 +1264,12 @@ def prepare_request(
     form fields) and one whose page text looks filled in need the user's
     "this form is blank"; other findings only warn. Raises FieldMapError on
     any value-shaped or unknown content.
+
+    ledger (a request_ledger.Ledger) records, on release only, the sha256 of
+    the original form bytes and the request id (the payload's form.sha256),
+    locally; form_convert refuses a map that does not answer that request.
+    It adds nothing to the payload. With ledger=None nothing is recorded, so
+    the converter will refuse maps for that request.
     """
     names = sorted(_names(list(names_source.data_point_names(bot_id)), "$.data_points"))
     if not names:
@@ -1277,13 +1300,18 @@ def prepare_request(
         "data_points": sorted(names),
     }
     check_outbound(payload, clean)
-    warnings, confirm = _confirm_text(
-        clean, form_id, hashlib.sha256(original).hexdigest()
-    )
+    source_sha256 = hashlib.sha256(original).hexdigest()
+    warnings, confirm = _confirm_text(clean, form_id, source_sha256)
     if unnamed:
         warnings.append(f"{unnamed} form fields have no name and were left out")
     return PreparedRequest(
-        payload, clean, flat=flat, warnings=warnings, confirm=confirm
+        payload,
+        clean,
+        flat=flat,
+        warnings=warnings,
+        confirm=confirm,
+        source_sha256=source_sha256,
+        ledger=ledger,
     )
 
 

@@ -26,6 +26,13 @@ in this repository. It is not a security promise: read
   - `vault.db.loghead.json`: a signed summary of the access log, so changes
     made without your passphrase can be noticed. It is rewritten through a
     temporary `.tmp` file next to it.
+  - `form requests.jsonl`: one line each time you send a form-reading
+    request, holding two hashes only: the SHA-256 of the blank form you chose
+    and the request's id (the hash of the cleaned copy that was sent, which
+    the request already carries). It holds no names, values or paths, and is
+    only added to, never rewritten. It lets the app refuse a field map that
+    does not answer the latest request sent for that form. Nothing extra is
+    sent because of it.
   - `Completed forms`: each form you fill from your saved details, as
     `<form name> completed.pdf` (then `completed-2.pdf`, and so on; a file
     is never replaced). It is your own copy of the form, so your SSN, VA
@@ -41,7 +48,9 @@ in this repository. It is not a security promise: read
 - **The folder of a form you fill from your saved details:** one new file,
   `<form name> fillable.pdf`, a copy of the form with every field emptied.
   It never replaces a file there (`fillable-2.pdf`, `fillable-3.pdf`, and
-  so on), and the form itself is not changed.
+  so on), and the form itself is not changed. Making a fillable copy of a
+  flat or scanned form writes the same name the same way, with empty fields
+  where its field map places them, only after you say yes.
 - **A copy of the log summary**, only if you ask for one, at the place you
   choose.
 - **This repository's folder, during setup:**

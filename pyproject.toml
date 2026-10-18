@@ -30,6 +30,7 @@ py-modules = [
     "fill_engine",
     "fill_ui",
     "form_convert",
+    "request_ledger",
     "form_fill",
     "identifier_blocklist",
     "identifier_detect",
