@@ -4,11 +4,12 @@ Two new files come out of one run; nothing is ever replaced:
 
 - "<name> fillable.pdf" in the form's own folder: the form with every field
   value emptied, ready to fill again by hand or by this engine.
-- "<name> completed.pdf" in the per-user drafts folder (or completed_dir,
-  never the form's folder): the fields filled from the data points the
-  field map names. This is the user's own form, kept only on this computer,
-  so identifiers (SSN, VA file number, service number, ...) are filled in
-  too, as VA needs them. It is not a draft and carries no DRAFT stamp.
+- "<name> completed.pdf" in the per-user "Completed forms" folder (or
+  completed_dir; never the drafts folder or the form's folder): the fields
+  filled from the data points the field map names. This is the user's own
+  form, kept only on this computer, so identifiers (SSN, VA file number,
+  service number, ...) are filled in too, as VA needs them. It is not a
+  draft and carries no DRAFT stamp.
 
 When a name is taken, "-2", "-3", ... is added before ".pdf", the same
 style as form_fill's drafts. New files are opened with mode "xb" only, so
@@ -58,6 +59,7 @@ form_fill = _load("form_fill")
 field_map = _load("field_map")
 
 MAX_COPIES = form_fill.MAX_COPIES
+COMPLETED_DIR_NAME = "Completed forms"  # apart from drafts: holds identifiers
 TRUE_WORDS = frozenset({"yes", "y", "true", "x", "1", "on", "checked"})
 
 
@@ -76,6 +78,61 @@ class FillResult:
     source_sha256: str
     fillable_sha256: str
     completed_sha256: str
+
+
+@dataclasses.dataclass(frozen=True, order=True)
+class Place:
+    """One form field a data point goes to (a map entry with a "field")."""
+
+    data_point: str
+    field: str
+    page: int
+
+
+@dataclasses.dataclass(frozen=True)
+class Step:
+    """One data point shown in the fill window, with the places it goes."""
+
+    data_point: str
+    places: tuple[Place, ...]
+
+
+def places(raw_map, request) -> list[Place]:
+    """Every (data point, form field, page) the field map fills, in map order.
+
+    When to use: by the fill window, before steps(). Entries without a
+    "field" name are left out (they are not filled in this step).
+    """
+    parsed = field_map.parse_field_map(raw_map, request)
+    return [
+        Place(e["data_point"], e["field"], e["page"])
+        for e in parsed["fields"]
+        if "field" in e
+    ]
+
+
+def steps(all_places, *, by_data_point: bool) -> list[Step]:
+    """The same places in one of two orders, grouped into window steps.
+
+    by_data_point: one step per data point, in catalog order, holding every
+    place it goes (by page, then map order). Otherwise by page or field:
+    places by page, then map order; neighbours with the same data point
+    share a step. Both orders hold exactly the same places.
+    """
+    order = {p: k for k, p in enumerate(all_places)}
+    if by_data_point:
+        rank = {name: k for k, name in enumerate(field_map.CATALOG)}
+        key = lambda p: (rank[p.data_point], p.page, order[p])  # noqa: E731
+    else:
+        key = lambda p: (p.page, order[p])  # noqa: E731
+    out: list[Step] = []
+    for place in sorted(all_places, key=key):
+        if out and out[-1].data_point == place.data_point:
+            last = out.pop()
+            out.append(Step(last.data_point, (*last.places, place)))
+        else:
+            out.append(Step(place.data_point, (place,)))
+    return out
 
 
 def _sha256(data: bytes) -> str:
@@ -216,8 +273,8 @@ def fill_form(
     form) and unlocked the vault. Values come from the vault's data points
     the map names, identifiers included (this file stays on this
     computer). The fillable copy goes next to the form; the completed copy
-    goes to completed_dir (default: the per-user drafts folder), which must
-    not be the form's folder. Existing
+    goes to completed_dir (default: the per-user "Completed forms" folder),
+    which must not be the drafts folder or the form's folder. Existing
     files are never replaced. Nothing is submitted or sent.
     """
     rv = form_fill.records_vault
@@ -227,12 +284,14 @@ def fill_form(
     source = Path(source).resolve()
     if not source.is_file() or source.suffix.lower() != ".pdf":
         raise FillError("the form must be an existing .pdf file")
-    if completed_dir is None:
-        target = Path(form_fill.app_paths.data_dir()) / "drafts"
-    else:
-        target = Path(completed_dir)
+    data = Path(form_fill.app_paths.data_dir())
+    target = Path(completed_dir) if completed_dir is not None else None
+    if target is None:
+        target = data / COMPLETED_DIR_NAME
     if target.resolve() == source.parent:
         raise FillError("the completed copy is saved apart from the form's folder")
+    if target.resolve() == (data / "drafts").resolve():
+        raise FillError("the completed copy is never saved with the drafts")
 
     original = source.read_bytes()
     source_sha = _sha256(original)

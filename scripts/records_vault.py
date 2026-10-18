@@ -296,6 +296,8 @@ CREATE TABLE IF NOT EXISTS data_points (
     name TEXT PRIMARY KEY, value TEXT NOT NULL, ts TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS data_point_links (
     name TEXT NOT NULL, category TEXT NOT NULL, PRIMARY KEY (name, category));
+CREATE TABLE IF NOT EXISTS rules (
+    rule TEXT PRIMARY KEY, value INTEGER NOT NULL CHECK (value IN (0, 1)));
 """
 # A saved-for-later review state larger than this is refused.
 DRAFT_MAX = 1_000_000
@@ -329,6 +331,8 @@ ROW_ID_MAX = 128
 FIELD_MAC_PREFIX = "field-value\x1f"
 # Citation checks allowed per unlock session; after that the check fails
 # closed (unlock again). Keeps the check from working as a guessing oracle.
+# The fill window's settings: the one rules table (no second store).
+RULE_DEFAULTS = {"by_data_point": True, "require_each_checked": True}
 QUOTE_CHECK_LIMIT = 50
 MIN_CHECK_QUOTE = 20
 _TAG_ONLY = local_search.TAG  # the detector's one tag pattern
@@ -1196,6 +1200,40 @@ class Vault:
         self._check_open()
         bot_id = self._bot(bot_id)
         self._log(bot_id, "form_draft_made", detail)
+
+    def rules(self, bot_id: str) -> dict[str, bool]:
+        """Return the fill settings: RULE_DEFAULTS overlaid with saved ones.
+
+        When to use: when the fill window opens. Rules hold no personal
+        data; reading them is not logged.
+        """
+        self._check_open()
+        self._bot(bot_id)
+        out = dict(RULE_DEFAULTS)
+        for rule, value in self._conn.execute("SELECT rule, value FROM rules"):
+            if rule in out:
+                out[rule] = bool(value)
+        return out
+
+    def set_rule(self, rule: str, on: bool, bot_id: str) -> None:
+        """Save one fill setting (a key of RULE_DEFAULTS) as True or False.
+
+        When to use: when the user ticks a setting in the fill window. The
+        log keeps the rule's name and its new state.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        if type(rule) is not str or rule not in RULE_DEFAULTS:
+            raise VaultError("rule: not a known setting")
+        if type(on) is not bool:
+            raise VaultError("rule: the value must be True or False")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO rules (rule, value) VALUES (?, ?)"
+                " ON CONFLICT(rule) DO UPDATE SET value = excluded.value",
+                (rule, int(on)),
+            )
+        self._log(bot_id, "rule_set", {"rule": rule, "on": on})
 
     def record_form_completed(self, detail: dict, bot_id: str) -> None:
         """Log that a completed form copy was written (no field values).

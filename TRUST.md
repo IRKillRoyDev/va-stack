@@ -26,15 +26,18 @@ in this repository. It is not a security promise: read
   - `vault.db.loghead.json`: a signed summary of the access log, so changes
     made without your passphrase can be noticed. It is rewritten through a
     temporary `.tmp` file next to it.
+  - `Completed forms`: each form you fill from your saved details, as
+    `<form name> completed.pdf` (then `completed-2.pdf`, and so on; a file
+    is never replaced). It is your own copy of the form, so your SSN, VA
+    file number and other identifiers from the vault are filled in, as VA
+    needs them. This folder holds **full personal data** (your SSN, VA file
+    numbers and service numbers) and is **not encrypted**. The files have
+    no DRAFT mark and are never sent anywhere. The app refuses to save them
+    in `drafts` or in the form's own folder. Drafts never hold them.
   - `drafts`: draft copies of VA forms, if you make any. Drafts are plain
     PDF files and are **not encrypted**. A new draft never replaces an
     existing file; it gets a new name (`-draft-2.pdf`, `-draft-3.pdf`,
-    and so on). A form filled from your saved details is saved here too, as
-    `<form name> completed.pdf` (then `completed-2.pdf`, and so on). It is
-    your own copy of the form, so your SSN, VA file number and other
-    identifiers from the vault are filled in, as VA needs them; it has no
-    DRAFT mark, is not encrypted, and is never sent anywhere. Drafts never
-    hold them.
+    and so on). Forms filled with your identifiers are never in `drafts`.
 - **The folder of a form you fill from your saved details:** one new file,
   `<form name> fillable.pdf`, a copy of the form with every field emptied.
   It never replaces a file there (`fillable-2.pdf`, `fillable-3.pdf`, and
