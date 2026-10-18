@@ -553,7 +553,9 @@ def test_field_map_module_has_no_network_or_send(fm):
     for mod in ("socket", "http", "urllib", "requests", "httpx", "subprocess"):
         assert not re.search(rf"(?m)^\s*(?:import|from)\s+{mod}\b", src), mod
     public = [n for n in dir(fm) if not n.startswith("_")]
-    assert not [n for n in public if re.search(r"send|upload|post|mail", n, re.I)]
+    assert not [
+        n for n in public if re.search(r"send|upload|post|mail", n, re.IGNORECASE)
+    ]
 
 
 def test_schema_is_documented_as_not_wired_up():
