@@ -55,9 +55,11 @@ the user's computer, makes no network calls, and writes nothing to disk.
 - Redaction is pattern-based. It can miss identifiers and it can over-redact
   ordinary numbers. Known gaps: names without a label (including third parties)
   are not redacted (see below); a bare year such as "born in 1961" is not
-  redacted; an unlabeled phone like "555 010 0199" or an unlabeled 7-digit phone
-  is not redacted; and a minor's (child's) date of birth with no birth label is
-  not redacted, because recent dates are kept. The user reviews every snippet
+  redacted; an unlabeled phone like "555 010 0199" is hidden only as a generic
+  number (every unlabeled run of seven or more digits is hidden, so ordinary
+  numbers such as "dose 100 1000 mg" are hidden too); and a minor's (child's)
+  date of birth with no birth label is not redacted, because recent dates are
+  kept. The user reviews every snippet
   before approving it.
 - Names are redacted only when labeled, matching `scripts/local_search.py` and
   SAFETY.md. Labels (any case, ALL CAPS included): Name, Patient, Pt, Veteran,
