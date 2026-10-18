@@ -202,5 +202,7 @@ jobs:
         env:
           VA_STACK_SETUP_TEST: "1"
         run: |
-          python -m pip install pytest==8.3.3
-          python -m pytest -v -rs tests/test_setup_twice.py
+          py=.venv/bin/python
+          if [ "$RUNNER_OS" = "Windows" ]; then py=.venv/Scripts/python.exe; fi
+          "$py" -m pip install pytest==8.3.3
+          "$py" -m pytest -v -rs tests/test_setup_twice.py
