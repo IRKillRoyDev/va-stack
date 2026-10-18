@@ -341,6 +341,13 @@ def pane_frame(win):
     """The page pane as it is on screen in a fresh screenshot (QImage)."""
     path = shot(win, "12-review-page-highlight")
     img = QImage(str(path))
+    if img.width() != win.width():  # high-DPI screen: back to window pixels
+        img = img.scaled(
+            win.width(),
+            win.height(),
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
     view = win.pane.view
     top_left = view.viewport().mapTo(win, QPoint(0, 0))
     return img.copy(
@@ -354,7 +361,7 @@ def ink_and_yellow(img):
     for y in range(img.height()):
         for x in range(0, img.width(), 2):
             c = QColor(img.pixel(x, y))
-            if c.red() < 110 and c.green() < 110 and c.blue() < 110:
+            if max(c.red(), c.green(), c.blue()) < 170:  # text, even anti-aliased
                 dark += 1
             elif c.red() > 200 and c.green() > 170 and c.blue() < 120:
                 ys.append(y)
