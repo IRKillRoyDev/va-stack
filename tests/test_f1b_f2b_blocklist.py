@@ -262,7 +262,8 @@ NEGATIVES = [
     "2024-05-02",
     "2027-05-02",
     "1,250",
-    "1,250,000",
+    # Round 17 (G5): an unlabeled 7-8 digit number in any grouping is an
+    # identifier on both detectors; "1,250,000" without "$" is now blocked.
     "$1,250,000",
     "$125,000,000",
     "$1,234,567,890",

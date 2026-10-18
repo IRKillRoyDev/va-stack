@@ -85,11 +85,18 @@ def test_n2_recent_two_digit_year_kept():
 
 
 # N4: phone false positives
-@pytest.mark.parametrize(
-    "s", ["dose 100 1000 mg", "2019 2020-2021", "flexion 120 1300"]
-)
+@pytest.mark.parametrize("s", ["2019 2020-2021"])
 def test_n4_no_phone_false_positive(s):
     assert default(s) == s
+
+
+# Round 17: the pane shows what the form blocklist allows and nothing more.
+# These 7-digit runs were always blocked on forms, so the pane now hides them
+# too (they are not shown as phones; they are generic numbers).
+@pytest.mark.parametrize("s", ["dose 100 1000 mg", "flexion 120 1300"])
+def test_n4_seven_digit_runs_hidden_like_the_blocklist(s):
+    out, counts = ls.redact(s)
+    assert "PHONE" not in counts and counts.get("NUMBER") == 1, (out, counts)
 
 
 @pytest.mark.parametrize(

@@ -162,7 +162,9 @@ def test_low_letters_limit_is_documented_consistently():
     safety = " ".join((ROOT / "SAFETY.md").read_text(encoding="utf-8").split())
     doc = " ".join((bl.__doc__ or "").split())
     for text in (readme, safety, doc):
-        assert "eight punctuation" in text, text[:200]
+        # Round 17 (G10): the punctuation cap is gone; letters are the limit.
+        assert "any amount of punctuation" in text, text[:200]
+        assert "eight punctuation" not in text and "nine or more" not in text
         assert "letters" in text
     assert "0001a2345a6789" in readme and "0001a2345a6789" in doc
 
@@ -170,7 +172,7 @@ def test_low_letters_limit_is_documented_consistently():
 def test_low_letters_behavior_matches_docs():
     """The stated limit is the real limit (no silent over- or under-claim)."""
     assert bl.blocked_value("0001a2345a6789") is None
-    assert bl.blocked_value("0001.........2345.........6789") is None  # 9 marks
+    assert bl.blocked_value("0001.........2345.........6789") is not None  # 9 marks
 
 
 # ---------------- LOW: usability over-blocks ----------------
@@ -292,7 +294,8 @@ NEGATIVES = [
     "03/14/2027        2027-05-02",
     "seen 03/14/2027    follow-up 04/15/2027",
     "2015        2016        2017",
-    "1,250,000",
+    # Round 17 (G5): an unlabeled 7-8 digit number in any grouping is an
+    # identifier on both detectors; "1,250,000" without "$" is now blocked.
     "$1,250,000",
     "$125,000,000",
     "back pay $12,345,678.00",

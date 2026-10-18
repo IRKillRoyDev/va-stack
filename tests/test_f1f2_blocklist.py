@@ -130,7 +130,8 @@ NEGATIVES = [
     "03/14/2024",
     "2024-05-02",
     "1,250",
-    "1,250,000",
+    # Round 17 (G5): an unlabeled 7-8 digit number in any grouping is an
+    # identifier on both detectors; "1,250,000" without "$" is now blocked.
     "$125,000,000",
     (
         "Knee rated 10% under 38 CFR 4.71a, DC 5260/5003; "
