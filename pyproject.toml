@@ -28,6 +28,7 @@ py-modules = [
     "app_paths",
     "field_map",
     "fill_engine",
+    "fill_ui",
     "form_fill",
     "identifier_blocklist",
     "identifier_detect",
