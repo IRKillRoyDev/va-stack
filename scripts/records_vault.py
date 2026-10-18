@@ -1197,6 +1197,16 @@ class Vault:
         bot_id = self._bot(bot_id)
         self._log(bot_id, "form_draft_made", detail)
 
+    def record_form_completed(self, detail: dict, bot_id: str) -> None:
+        """Log that a completed form copy was written (no field values).
+
+        When to use: only from fill_engine.fill_form(). detail holds the
+        redacted form file name, counts and the two files' sha256 hashes.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        self._log(bot_id, "form_completed", detail)
+
     def set_data_point(self, name: str, value: str, bot_id: str) -> None:
         """Store (or replace) the value of one catalog data point.
 

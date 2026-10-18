@@ -30,9 +30,11 @@ in this repository. It is not a security promise: read
     PDF files and are **not encrypted**. A new draft never replaces an
     existing file; it gets a new name (`-draft-2.pdf`, `-draft-3.pdf`,
     and so on). A form filled from your saved details is saved here too, as
-    `<form name> completed.pdf` (then `completed-2.pdf`, and so on), with
-    the DRAFT mark on every page. Your SSN and other identifiers are never
-    filled in.
+    `<form name> completed.pdf` (then `completed-2.pdf`, and so on). It is
+    your own copy of the form, so your SSN, VA file number and other
+    identifiers from the vault are filled in, as VA needs them; it has no
+    DRAFT mark, is not encrypted, and is never sent anywhere. Drafts never
+    hold them.
 - **The folder of a form you fill from your saved details:** one new file,
   `<form name> fillable.pdf`, a copy of the form with every field emptied.
   It never replaces a file there (`fillable-2.pdf`, `fillable-3.pdf`, and
@@ -102,7 +104,10 @@ by any window yet. When it is used:
   list are sent with no title); the names, types and positions of the
   form's fields, never what is in them; its page count and page sizes; the
   SHA-256 hash of that exact copy; and the names of your data points, never
-  their values (for example `ssn`, never the number).
+  their values (for example `ssn`, never the number). A form number that is
+  not in the program's list must match a strict pattern of at most 7 digits,
+  so it cannot carry a full SSN or account number, and you see the exact
+  payload first.
 - **The copy is cleaned first:** filled-in answers, metadata (such as the
   author or title), earlier versions saved inside the file, scripts,
   attachments, comments and links are removed. The copy is checked again
