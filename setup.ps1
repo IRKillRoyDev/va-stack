@@ -20,7 +20,7 @@ if (Test-Path -LiteralPath ".venv\Scripts\python.exe") {
 . .\.venv\Scripts\Activate.ps1
 
 Write-Host "Step 2 of 4: install va-stack and its packages"
-python -m pip install -e .
+python -m pip install -e . -c constraints.txt
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
 Write-Host "Step 3 of 4: check the encryption (SQLCipher)"

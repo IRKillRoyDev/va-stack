@@ -31,7 +31,7 @@ fi
 source .venv/bin/activate
 
 echo "Step 2 of 5: install va-stack and its packages"
-python -m pip install -e .
+python -m pip install -e . -c constraints.txt
 
 echo "Step 3 of 5: check the encryption (SQLCipher)"
 version=$(python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])")
