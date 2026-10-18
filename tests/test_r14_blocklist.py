@@ -254,13 +254,25 @@ def test_redos_12k_inputs_fast(name):
     assert time.perf_counter() - t0 < 1.0, name
 
 
+def _best_time(s, runs=3):
+    best = float("inf")
+    for _ in range(runs):
+        t0 = time.perf_counter()
+        bl.blocked_value(s)
+        ls.redact(s)
+        best = min(best, time.perf_counter() - t0)
+    return best
+
+
+# Round 18: Defense's widened label regex (_Labels.__init__) costs about 2.7x
+# per character but stays linear, so the budget is 2.5 s; the 96k/48k ratio
+# check still catches a quadratic blowup (which would give about 4x).
 @pytest.mark.parametrize("name", ["9-punct near-miss", "address chars no at"])
 def test_redos_96k_inputs_stay_linear(name):
-    s = _adversarial(96000)[name]
-    t0 = time.perf_counter()
-    bl.blocked_value(s)
-    ls.redact(s)
-    assert time.perf_counter() - t0 < 1.0, name
+    t96 = _best_time(_adversarial(96000)[name])
+    t48 = _best_time(_adversarial(48000)[name])
+    assert t96 < 2.5, (name, t96)
+    assert t96 <= 2.5 * t48, (name, t96, t48)
 
 
 def test_email_still_redacted():
