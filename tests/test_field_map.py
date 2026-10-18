@@ -522,6 +522,8 @@ def test_inbound_rejects_oversize_lists(fm, request_):
         b"\xff\xfe\x00",
         "x" * (512 * 1024),
     ],
+    # Short ids: a huge id overflows PYTEST_CURRENT_TEST on Windows (32767).
+    ids=lambda raw: f"{type(raw).__name__}-{len(raw)}",
 )
 def test_inbound_rejects_non_json_deep_or_huge(fm, request_, raw):
     with pytest.raises(fm.FieldMapError):
