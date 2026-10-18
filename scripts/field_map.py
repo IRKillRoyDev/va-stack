@@ -1235,17 +1235,16 @@ class PreparedRequest:
         if fields != self._fields_json:
             raise FieldMapError("consent: the field list changed after it was shown")
         check_outbound(self._payload, self._bytes)
-        if self._ledger is not None:
-            # Local only: {original form hash -> request id}. The request id is
-            # form.sha256, already in the payload; nothing new is sent.
-            try:
-                self._ledger.record(
-                    self._source_sha256, self._payload["form"]["sha256"]
-                )
-            except (OSError, ValueError) as exc:
-                raise FieldMapError(
-                    "ledger: the request could not be recorded"
-                ) from exc
+        # Local only: {original form hash -> request id}. The request id is
+        # form.sha256, already in the payload; nothing new is sent. Without a
+        # ledger argument the real one in the app data folder is used.
+        ledger = self._ledger
+        if ledger is None:
+            ledger = _load("request_ledger").Ledger()
+        try:
+            ledger.record(self._source_sha256, self._payload["form"]["sha256"])
+        except (OSError, ValueError) as exc:
+            raise FieldMapError("ledger: the request could not be recorded") from exc
         self._released = True
         return copy.deepcopy(self._payload), self._bytes
 
@@ -1268,8 +1267,8 @@ def prepare_request(
     ledger (a request_ledger.Ledger) records, on release only, the sha256 of
     the original form bytes and the request id (the payload's form.sha256),
     locally; form_convert refuses a map that does not answer that request.
-    It adds nothing to the payload. With ledger=None nothing is recorded, so
-    the converter will refuse maps for that request.
+    It adds nothing to the payload. ledger=None (the default) uses
+    request_ledger.Ledger(), the file in the app data folder.
     """
     names = sorted(_names(list(names_source.data_point_names(bot_id)), "$.data_points"))
     if not names:
