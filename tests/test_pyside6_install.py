@@ -81,3 +81,24 @@ def test_setup_jobs_check_pyside6_installs():
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
     setup = ci.split("\n  setup:\n", 1)[1]
     assert setup.count("import PySide6.QtPdfWidgets") >= 2  # bash and pwsh steps
+
+
+def test_every_qt_module_the_app_uses_comes_from_the_pinned_wheels():
+    """Each PySide6 module scripts/ imports loads from Essentials or Pdf."""
+    from importlib import import_module, metadata
+
+    used = set()
+    for path in (ROOT / "scripts").glob("*.py"):
+        used |= set(re.findall(r"PySide6\.(Qt\w+)", path.read_text(encoding="utf-8")))
+    assert {"QtCore", "QtGui", "QtWidgets", "QtPdf", "QtPdfWidgets"} <= used
+    owners = {}
+    for dist in ("PySide6-Essentials", "PySide6-Pdf"):
+        for f in metadata.distribution(dist).files or []:
+            owners[Path(str(f)).as_posix()] = dist
+    for name in sorted(used):
+        mod = import_module(f"PySide6.{name}")
+        rel = Path(mod.__file__).resolve()
+        hits = [d for p, d in owners.items() if rel.as_posix().endswith(p)]
+        assert hits, f"PySide6.{name} is not from a pinned wheel"
+        want = "PySide6-Pdf" if name.startswith("QtPdf") else "PySide6-Essentials"
+        assert hits == [want], (name, hits)
