@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:va-stack:schema:field-map:1",
+  "title": "va-stack field map (request out, map in)",
+  "description": "Names only, never values. A request lists a blank form and the NAMES of data points; a field map says where each data point goes and which are missing. scripts/field_map.py enforces the allowlist on top of this schema. Local $ref only.",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/field_map" }
+  ],
+  "$defs": {
+    "data_point": {
+      "description": "A data-point NAME from the allowlist in scripts/field_map.py (never a value).",
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 40,
+      "pattern": "^[a-z][a-z_]{1,39}$"
+    },
+    "data_points": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/data_point" },
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "points": {
+      "description": "A length in PDF points (1/72 inch); 14400 is the PDF page-size limit.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 14400
+    },
+    "page_size": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "width": { "$ref": "#/$defs/points", "exclusiveMinimum": 0 },
+        "height": { "$ref": "#/$defs/points", "exclusiveMinimum": 0 }
+      }
+    },
+    "label": {
+      "description": "A short printed label copied from the blank form; no values.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60,
+      "pattern": "^[A-Za-z][A-Za-z0-9 ().,'/&:-]{0,59}$"
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "form", "data_points"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "kind": { "const": "field_map_request" },
+        "form": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name", "sha256", "page_count", "page_sizes"],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "pattern": "^[0-9A-Z][0-9A-Z-]{0,15}$"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z][A-Za-z0-9 ().,'/&:-]{0,79}$"
+            },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "page_count": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "page_sizes": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/page_size" },
+              "minItems": 1,
+              "maxItems": 100
+            }
+          }
+        },
+        "data_points": { "$ref": "#/$defs/data_points", "minItems": 1 }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "rect", "type", "data_point"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "rect": {
+          "description": "[x0, y0, x1, y1] in PDF points from the lower-left corner of the page.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/points" },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "type": { "enum": ["text", "checkbox", "date"] },
+        "data_point": { "$ref": "#/$defs/data_point" },
+        "label": { "$ref": "#/$defs/label" },
+        "format": {
+          "enum": ["plain", "uppercase", "MM-DD-YYYY", "MM/DD/YYYY", "MM-YYYY", "YYYY", "check"]
+        }
+      }
+    },
+    "field_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "form_sha256", "fields", "missing"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "kind": { "const": "field_map" },
+        "form_sha256": { "$ref": "#/$defs/sha256" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/field" },
+          "minItems": 1,
+          "maxItems": 200
+        },
+        "missing": { "$ref": "#/$defs/data_points" }
+      }
+    }
+  }
+}

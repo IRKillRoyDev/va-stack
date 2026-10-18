@@ -12,3 +12,5 @@ sqlcipher3-binary==0.6.0; sys_platform == "linux"
 sqlcipher3>=0.6.4; sys_platform == "darwin"
 sqlcipher3==0.6.4; sys_platform == "win32"
 argon2-cffi==25.1.0
+# Field-map JSON Schema checks (schemas/field_map.schema.json), local only.
+jsonschema==4.26.0
