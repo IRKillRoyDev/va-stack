@@ -150,11 +150,12 @@ FORMATS = {
 COMB_DATES = {"MMDDYYYY": 8, "MMYYYY": 6, "YYYY": 4}  # one digit per box
 MAX_FIELDS = 200
 MAX_NAMES = 100
+MAX_PLACEMENTS_PER_POINT = 4  # boxes one data point may fill on a form
 MAX_PAGES = 100
 MAX_RAW_BYTES = 256 * 1024
 MAX_DEPTH = 6
 MIN_SIDE = 4.0  # points; a smaller box cannot hold a mark or a letter
-LABEL_MAX, LABEL_WORDS = 60, 8
+LABEL_MAX, LABEL_WORDS = 60, 12  # "Date you were released from active duty"
 FORM_NAME_MAX, FORM_NAME_WORDS = 80, 12
 
 REQUEST_KEYS = frozenset({"schema_version", "kind", "form", "data_points"})
@@ -237,13 +238,13 @@ def check_name(name, where: str = "$.data_point") -> str:
     Screening is by catalog membership only: identifier NAMES such as ssn
     are fine here, because only names leave. Values never pass through.
     """
-    if not isinstance(name, str) or name not in CATALOG:
+    if type(name) is not str or name not in CATALOG:
         raise FieldMapError(f"{where}: not a catalog data-point name")
     return name
 
 
 def _check_text(text, where: str, max_len: int, max_words: int) -> str:
-    if not isinstance(text, str) or not text or len(text) > max_len:
+    if type(text) is not str or not text or len(text) > max_len:
         raise FieldMapError(f"{where}: must be short text")
     if not _TEXT.fullmatch(text) or text != text.strip() or "  " in text:
         raise FieldMapError(f"{where}: has characters a label does not need")
@@ -263,7 +264,7 @@ def check_label(label, where: str = "$.label") -> str:
 
 
 def _check_form_id(form_id) -> str:
-    if not isinstance(form_id, str) or not _FORM_ID.fullmatch(form_id):
+    if type(form_id) is not str or not _FORM_ID.fullmatch(form_id):
         raise FieldMapError("$.form.id: must be a VA form number")
     if identifier_blocklist.blocked_value(form_id) is not None:
         raise FieldMapError("$.form.id: looks like an identifier value")
@@ -300,6 +301,8 @@ def check_outbound(payload) -> dict:
         _keys(size, SIZE_KEYS, f"$.form.page_sizes[{k}]", SIZE_KEYS)
     _validate(payload, "request")
     form = payload["form"]
+    _whole(payload["schema_version"], "$.schema_version")
+    _whole(form["page_count"], "$.form.page_count")
     _check_form_id(form["id"])
     _check_form_name(form["name"])
     if form["page_count"] != len(sizes):
@@ -309,8 +312,14 @@ def check_outbound(payload) -> dict:
     return payload
 
 
+def _whole(value, where: str) -> None:
+    """JSON Schema's integer also takes 1.0 and True; the gate does not."""
+    if type(value) is not int:
+        raise FieldMapError(f"{where}: must be a whole number")
+
+
 def _rotation(value) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value % 90:
+    if type(value) is not int or value % 90:
         raise FieldMapError("page rotation: must be a multiple of 90 degrees")
     return value % 360
 
@@ -430,9 +439,13 @@ def _strict_json(raw):
             raw = bytes(raw).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise FieldMapError("$: not UTF-8 text") from exc
-    if not isinstance(raw, str):
+    if type(raw) is not str:
         raise FieldMapError("$: must be JSON text")
-    if len(raw.encode("utf-8")) > MAX_RAW_BYTES:
+    try:
+        size = len(raw.encode("utf-8"))
+    except UnicodeEncodeError as exc:  # a lone surrogate
+        raise FieldMapError("$: not encodable text") from exc
+    if size > MAX_RAW_BYTES:
         raise FieldMapError("$: too large")
     if not _depth_ok(raw):
         raise FieldMapError("$: nested too deeply")
@@ -448,6 +461,9 @@ def _strict_json(raw):
 
 def _check_field(field: dict, where: str, sizes: list) -> None:
     name = check_name(field["data_point"], f"{where}.data_point")
+    _whole(field["page"], f"{where}.page")
+    if "max_length" in field:
+        _whole(field["max_length"], f"{where}.max_length")
     kind = field["type"]
     if kind not in TYPE_FIELDS[CATALOG[name]["type"]]:
         raise FieldMapError(f"{where}.type: does not fit the data point")
@@ -464,8 +480,8 @@ def _check_field(field: dict, where: str, sizes: list) -> None:
             f"{where}.format: a comb date needs MMDDYYYY, MMYYYY or YYYY and"
             " one box per digit"
         )
-    if kind == "date" and max_length is not None and fmt and max_length < len(fmt):
-        raise FieldMapError(f"{where}.max_length: shorter than the date format")
+    if kind == "date" and max_length is not None and fmt and max_length != len(fmt):
+        raise FieldMapError(f"{where}.max_length: must equal the date format's length")
     if "label" in field:
         check_label(field["label"], f"{where}.label")
     if field["page"] > len(sizes):
@@ -483,10 +499,14 @@ def parse_field_map(raw, request: dict) -> dict:
 
     When to use: on every field map that comes back, before anything uses
     it. Returns the map (plain dicts and lists). Every mapped data_point must
-    be a catalog name; every missing entry must be a catalog name the request
-    did not hold; a requested name the form does not use is fine. Raises
-    FieldMapError on unknown keys or names, values in labels, pages or boxes
-    off the displayed page, or field types that do not fit the data point.
+    be a catalog name, placed at most MAX_PLACEMENTS_PER_POINT times.
+    missing must be exactly the mapped names the request did not hold: a
+    name mapped but not requested must be listed, and a listed name must be
+    mapped and not requested. A requested name the form does not use is
+    fine, and so is an empty map (fields [] and missing []) for a form that
+    uses no catalog name. Raises FieldMapError on unknown keys or names,
+    values in labels, pages or boxes off the displayed page, or field types
+    that do not fit the data point.
     """
     check_outbound(request)
     obj = _strict_json(raw)
@@ -496,13 +516,29 @@ def parse_field_map(raw, request: dict) -> dict:
     for k, field in enumerate(obj["fields"]):
         _keys(field, FIELD_KEYS, f"$.fields[{k}]", FIELD_REQUIRED)
     _validate(obj, "field_map")
+    _whole(obj["schema_version"], "$.schema_version")
     if obj["form_sha256"] != request["form"]["sha256"]:
         raise FieldMapError("$.form_sha256: answers a different form")
     sizes = request["form"]["page_sizes"]
+    placed: dict[str, int] = {}
     for k, field in enumerate(obj["fields"]):
         _check_field(field, f"$.fields[{k}]", sizes)
+        name = field["data_point"]
+        placed[name] = placed.get(name, 0) + 1
+        if placed[name] > MAX_PLACEMENTS_PER_POINT:
+            raise FieldMapError(f"$.fields[{k}].data_point: placed too many times")
     requested = set(request["data_points"])
-    for k, name in enumerate(_names(obj["missing"], "$.missing")):
+    missing = _names(obj["missing"], "$.missing")
+    for k, name in enumerate(missing):
         if name in requested:
             raise FieldMapError(f"$.missing[{k}]: was in the request")
+        if name not in placed:
+            raise FieldMapError(f"$.missing[{k}]: not mapped by any field")
+    for k, field in enumerate(obj["fields"]):
+        name = field["data_point"]
+        if name not in requested and name not in missing:
+            raise FieldMapError(
+                f"$.fields[{k}].data_point: mapped but not requested, so it"
+                " must be listed in missing"
+            )
     return obj

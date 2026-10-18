@@ -1,9 +1,10 @@
 {
   "catalog_version": 1,
-  "description": "Data-point NAMES the vault can fill on VA forms (21-526EZ, 21-0781, 20-0995 and the forms in skills/proposed-issues/forms.json). Only names ever leave the computer; the program fills values locally. Categories order the master data window's tabs. Types: text, date, checkbox, or choice (one of a fixed set, drawn as text or as checkboxes). After editing, run tools/sync_field_map_enum.py.",
+  "description": "Data-point NAMES the vault can fill on VA forms (21-526EZ, including its change-of-address and homeless sections, 21-0781, 20-0995 and the forms in skills/proposed-issues/forms.json). Only names ever leave the computer; the program fills values locally. Categories order the master data window's tabs. Types: text, date, checkbox, or choice (one of a fixed set, drawn as text or as checkboxes). After editing, run tools/sync_field_map_enum.py.",
   "categories": [
     "identity",
     "contact",
+    "housing",
     "service",
     "banking",
     "claim"
@@ -91,6 +92,56 @@
       "type": "text"
     },
     {
+      "name": "forwarding_address",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "forwarding_street",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "forwarding_unit",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "forwarding_city",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "forwarding_state",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "forwarding_zip",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "forwarding_country",
+      "category": "contact",
+      "type": "text"
+    },
+    {
+      "name": "forwarding_address_type",
+      "category": "contact",
+      "type": "choice"
+    },
+    {
+      "name": "forwarding_start_date",
+      "category": "contact",
+      "type": "date"
+    },
+    {
+      "name": "forwarding_end_date",
+      "category": "contact",
+      "type": "date"
+    },
+    {
       "name": "phone",
       "category": "contact",
       "type": "text"
@@ -109,6 +160,51 @@
       "name": "electronic_correspondence",
       "category": "contact",
       "type": "checkbox"
+    },
+    {
+      "name": "currently_homeless",
+      "category": "housing",
+      "type": "checkbox"
+    },
+    {
+      "name": "homeless_living_situation",
+      "category": "housing",
+      "type": "choice"
+    },
+    {
+      "name": "homeless_situation_other",
+      "category": "housing",
+      "type": "text"
+    },
+    {
+      "name": "at_risk_of_homelessness",
+      "category": "housing",
+      "type": "checkbox"
+    },
+    {
+      "name": "at_risk_living_situation",
+      "category": "housing",
+      "type": "choice"
+    },
+    {
+      "name": "at_risk_situation_other",
+      "category": "housing",
+      "type": "text"
+    },
+    {
+      "name": "homeless_contact_name",
+      "category": "housing",
+      "type": "text"
+    },
+    {
+      "name": "homeless_contact_phone",
+      "category": "housing",
+      "type": "text"
+    },
+    {
+      "name": "homeless_contact_international_phone",
+      "category": "housing",
+      "type": "text"
     },
     {
       "name": "service_branch",

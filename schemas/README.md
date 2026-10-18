@@ -31,9 +31,12 @@ and lists have size caps.
 
 The one list of data-point names. Each entry has a `name` (lowercase
 snake_case), a `category` and a `type`. The categories are `identity`,
-`contact`, `service`, `banking` and `claim`; they will order the tabs of
-the master data window. The types are `text`, `date`, `checkbox` and
-`choice` (one of a fixed set, written out or ticked).
+`contact`, `housing`, `service`, `banking` and `claim`; they will order the
+tabs of the master data window. `contact` includes the forwarding (new)
+address and its dates, and `housing` holds the homelessness and
+risk-of-homelessness points, both as the 21-526EZ asks for them. The types
+are `text`, `date`, `checkbox` and `choice` (one of a fixed set, written out
+or ticked).
 
 Identifier names such as `ssn`, `date_of_birth` and `mailing_address` are
 in the list because real VA forms ask for them. Only the names can leave
@@ -50,5 +53,7 @@ labels are refused when they look like a value (an identifier, a date or
 long free text). `build_request()` is the only way to make a request, and
 it asks the vault for names only. `parse_field_map()` checks a returned map
 against the request it answers: pages, boxes, field types and data points.
+Its `missing` list must be exactly the mapped names the request did not
+hold, and one data point may fill at most 4 boxes.
 Error messages point at the place (such as `$.fields[2].label`), never at
 the text.
