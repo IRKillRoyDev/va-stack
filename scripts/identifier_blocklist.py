@@ -10,7 +10,9 @@ Field names are matched after Unicode NFKC, removing invisible characters,
 splitting camelCase and dropping punctuation, so "S.S.N.", "Veteran_SSN[0]",
 "SOCIAL  SECURITY  NO" and "form1[0].#subform[0].DateOfBirth[0]" all match.
 Values are matched with the local_search redaction patterns plus a few more
-(labeled ZIP codes and any run of seven or more digits). The lists lean
+(labeled ZIP codes, any run of seven or more digits joined by spaces,
+dots or dashes, and any run of nine or more digits joined by slashes,
+commas, underscores or colons, e.g. "0001/2345/6789"). The lists lean
 toward leaving a field blank: a blank field is something the user fills in
 by hand; a wrong fill is a leak.
 
@@ -153,7 +155,19 @@ _REDACT_KINDS = {
 _ZIP = re.compile(
     r"\b(?:zip|postal)(?:\s*code)?\b[\s:#.]*\d{5}(?:-\d{4})?", re.IGNORECASE
 )
+# A digit run may be split by any common separator. Runs that use only
+# space, dot or dash count from 7 digits (as before); runs that use a slash,
+# comma, underscore, colon or other whitespace count from 9 digits, so
+# "5260/5003", "10/20/30", "03/14/2024" and amounts below 100,000,000
+# ("1,250,000") are not taken for an account number.
 _DIGIT_RUN = re.compile(r"(?<!\d)\d(?:[ .-]?\d){6,}(?!\d)")
+_WIDE_DIGIT_RUN = re.compile(r"(?<!\d)\d(?:[\s./_,:-]?\d){8,}(?!\d)")
+_RATING_LIST = re.compile(r"(?:100|[1-9]0)(?:/(?:100|[1-9]0)){2,}")
+_RATING_WORD = re.compile(r"%|percent|\brat(?:ed|ing|ings)\b", re.IGNORECASE)
+# 38 CFR Part 4 diagnostic codes are four digits, 5000-9999.
+_DC_LIST = re.compile(r"[5-9]\d{3}(?:[/,]\s?[5-9]\d{3})+")
+_DC_LABEL = re.compile(r"\b(?:DCs?|diagnostic\s+codes?)\b[\s:#]*$", re.IGNORECASE)
+_AMOUNT = re.compile(r"[1-9]\d{0,2}(?:,\d{3})+")
 _NOT_AN_ID = re.compile(
     r"\d{4}-\d{1,2}-\d{1,2}"  # recent ISO date (old ones are caught as DOB)
     r"|\d{1,2}[.-]\d{1,2}[.-]\d{2,4}"
@@ -175,8 +189,17 @@ def blocked_value(value: str) -> str | None:
             return category
     if _ZIP.search(text):
         return "ADDRESS"
-    for m in _DIGIT_RUN.finditer(text):
-        if not _NOT_AN_ID.fullmatch(m.group(0)):
+    runs = list(_DIGIT_RUN.finditer(text)) + list(_WIDE_DIGIT_RUN.finditer(text))
+    for m in runs:
+        run = m.group(0)
+        before = text[: m.start()]
+        if _RATING_LIST.fullmatch(run) and _RATING_WORD.search(text):
+            continue  # "ratings 10/20/30/40/50"
+        if _DC_LIST.fullmatch(run) and _DC_LABEL.search(before):
+            continue  # "DC 5260/5003/5010": diagnostic codes are 4 digits
+        if _AMOUNT.fullmatch(run) and re.search(r"\$\s*$", before):
+            continue  # "$125,000,000"
+        if not _NOT_AN_ID.fullmatch(run):
             return (
                 "SERVICE_NUMBER"
                 if re.search(r"[A-Za-z]\s?$", text[: m.start()])

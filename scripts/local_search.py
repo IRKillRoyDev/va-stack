@@ -268,7 +268,7 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         "SERVICE_NUMBER",
         re.compile(
             r"(?P<lbl>\b(?:service|serial|svc)\s*(?:number|num|no\.?|#)[\s:#.-]*)"
-            r"[A-Z]{0,3}[\s-]?\d{6,9}(?!\d)",
+            r"[A-Z]{0,3}[\s._/,-]?\d(?:[\s._/,-]?\d){5,8}(?!\d)",
             re.IGNORECASE,
         ),
     ),
@@ -279,7 +279,7 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         re.compile(
             r"(?P<lbl>\b(?:routing|aba|account|acct)"
             r"(?:\s*(?:number|num|no\.?|#))?[\s:#.-]*)"
-            r"\d(?:[\s-]?\d){5,16}(?!\d)",
+            r"\d(?:[\s._/,-]?\d){5,16}(?!\d)",
             re.IGNORECASE,
         ),
     ),
@@ -441,7 +441,24 @@ def _date_tag(m: re.Match[str]) -> str:
     year = _full_year(m.group("y"))
     if year > datetime.date.today().year - BIRTH_YEAR_MAX_AGE_GAP:
         return m.group(0)
+    if _is_rating_list(m):
+        return m.group(0)
     return f"[DATE-{year}]"
+
+
+# "10/20/30" next to rating words is a list of ratings, not Oct 20, 1930.
+# A birth-labeled date ("DOB 10/20/30") is already redacted by the label pass.
+_RATING_LIST = re.compile(r"(?:100|[1-9]0)(?:[/.-](?:100|[1-9]0)){2,}")
+_RATING_WORD = re.compile(r"%|percent|\brat(?:ed|ing|ings)\b", re.IGNORECASE)
+
+
+def _is_rating_list(m: re.Match[str]) -> bool:
+    """True for a run of 10..100 multiples next to a rating word or "%"."""
+    if not _RATING_LIST.fullmatch(m.group(0)):
+        return False
+    lo, hi = max(0, m.start() - 40), m.end() + 20
+    around = m.string[lo:hi]
+    return bool(_RATING_WORD.search(around))
 
 
 # An explicit part/serial label right before a number means it is not a phone.
