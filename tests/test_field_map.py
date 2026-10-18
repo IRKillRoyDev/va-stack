@@ -610,7 +610,7 @@ def test_inbound_requested_name_the_form_does_not_use_is_fine(fm, request_):
     assert fm.parse_field_map(_raw(m), request_)["missing"] == ["ssn"]
 
 
-# Lab Coach: missing == the mapped names minus the requested names, exactly.
+# The missing rule: missing == the mapped names minus the requested names, exactly.
 def test_missing_is_exactly_mapped_minus_requested(fm, request_):
     m = _map(request_)
     m["fields"].append(copy.deepcopy(m["fields"][2]))  # ssn mapped twice
@@ -699,7 +699,7 @@ def test_inbound_rejects_value_smuggled_into_label(fm, request_, label):
         "Social Security Number",
         "Date of birth (MM/DD/YYYY)",
         "Item 12a, 13b",
-        "Date you were released from active duty",  # Lab Coach's example
+        "Date you were released from active duty",  # a real 526EZ-style label
         "Date you were released from active duty in the Army or Navy",  # 12
     ],
 )
@@ -1078,7 +1078,7 @@ def test_schema_is_documented_as_not_wired_up():
         assert f"`{category}`" in doc, category
 
 
-# ---------------- pre-part-2: catalog additions (Lab Coach answer 4) ----------
+# ---------------- pre-part-2: catalog additions (review answer 4) ----------
 FORWARDING = {
     "forwarding_address": "text",
     "forwarding_street": "text",
