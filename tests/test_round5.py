@@ -269,7 +269,7 @@ def test_untampered_log_still_verifies(db):
 
 
 def test_safety_md_no_false_detection_claim():
-    text = (ROOT / "SAFETY.md").read_text()
+    text = " ".join((ROOT / "SAFETY.md").read_text().split())
     assert "hash-chained so edits or deletions are detected" not in text
     assert "password can rewrite" in text
 
@@ -316,7 +316,8 @@ def test_overclaim_scan_variants(tmp_path, phrase):
 
 
 def test_safety_documents_key_hex_copy():
-    assert "hex copy of the key" in (ROOT / "SAFETY.md").read_text()
+    text = " ".join((ROOT / "SAFETY.md").read_text().split())
+    assert "hex copy of the key" in text
 
 
 def test_snippet_digest_is_keyed(db):

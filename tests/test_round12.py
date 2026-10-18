@@ -195,7 +195,7 @@ def test_cli_confirm_wrong_phrase_not_saved(vault):
 
 def test_safety_wording_matches():
     for path in ("SAFETY.md", "skills/proposed-issues/SKILL.md"):
-        text = (ROOT / path).read_text()
+        text = " ".join((ROOT / path).read_text().split())
         assert "Enter alone is not a Yes" in text
         assert "types back a short random phrase" in text
         assert "Enter is Yes" not in text

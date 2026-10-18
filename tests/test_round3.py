@@ -130,7 +130,7 @@ def test_low_mn_cf_stripped():
 
 # DOCS
 def test_docs_safety_wording():
-    txt = (ROOT / "SAFETY.md").read_text()
+    txt = " ".join((ROOT / "SAFETY.md").read_text().split())
     assert "unrelated third parties" not in txt
     assert "born in 1961" in txt
     assert "over-redact" in txt

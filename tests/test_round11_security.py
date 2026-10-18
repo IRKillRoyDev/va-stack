@@ -184,7 +184,7 @@ def test_session_confirm_all_uses_token(vault):
 
 
 def test_safety_points_to_same_process_limit():
-    text = (ROOT / "SAFETY.md").read_text()
+    text = " ".join((ROOT / "SAFETY.md").read_text().split())
     assert "same Python process" in text
     assert "Confirm all" in text and "single-use" in text
 
@@ -284,7 +284,7 @@ def test_every_screen_says_check_for_names(vault):
 
 
 def test_unlabeled_names_documented_limit():
-    text = (ROOT / "SAFETY.md").read_text()
+    text = " ".join((ROOT / "SAFETY.md").read_text().split())
     assert "Names without a label are not redacted" in text
     assert "names we missed" in text
 
