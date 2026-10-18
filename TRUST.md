@@ -88,9 +88,17 @@ What the code shows, checked by searching every script for network modules
   parts. An automated test fails if a network module is ever added.
 - **Setup uses the internet once:** `setup.sh` and `setup.ps1` run
   `pip install -e .`, which downloads the packages listed in
-  `pyproject.toml` (such as SQLCipher, Argon2, pypdf, reportlab and
-  PySide6) from PyPI, the Python package index. The setup and start
+  `pyproject.toml` (such as SQLCipher, Argon2, pypdf, reportlab, PySide6,
+  RapidOCR and onnxruntime) from PyPI, the Python package index. The setup and start
   scripts download nothing else.
+- **Offline OCR** (`scripts/page_ocr.py`) reads blank-form pages that have
+  no text layer with RapidOCR on onnxruntime, on your computer. Its OCR
+  models (about 32 MB) come inside the RapidOCR package that setup installs,
+  and the app points RapidOCR at those files, so it downloads nothing while
+  it runs. The RapidOCR package does contain model-download code (it imports
+  `requests`); the app never uses it, and a test runs OCR with every network
+  connection blocked. The text OCR reads goes through the same identifier
+  check as everything else before any other part of the app sees it.
 - **A maintainer tool,** `tools/build_reference_fixtures.py`, downloads
   public reference data (VA form PDFs and 38 CFR text). The app and setup
   never run it.

@@ -1039,21 +1039,54 @@ def verify_sanitized(data: bytes) -> None:
         raise FieldMapError("form: the sanitized copy could not be checked") from exc
 
 
-def _confirm_text(data: bytes, form_id: str, original_sha256: str):
-    """Local checks of the page text: (warnings, needs_confirm).
+def _ocr_page(data: bytes, number: int):
+    """page_ocr's scanned text for page number (1-based), or None if OCR did not run."""
+    try:
+        page_ocr = _load("page_ocr")
+        if not page_ocr.available():
+            return None
+        return page_ocr.read_pdf_page(data, number - 1)
+    except Exception:  # missing, failed: the page stays "not checked"
+        return None
+
+
+def _has_words(reader, index: int) -> bool:
+    try:
+        return bool((reader.pages[index].extract_text() or "").split())
+    except Exception:
+        return False
+
+
+def _confirm_text(
+    data: bytes,
+    form_id: str,
+    original_sha256: str,
+    *,
+    ocr: bool = True,
+    original: bytes | None = None,
+):
+    """Local checks of the page text: (warnings, needs_confirm, ocr_hits).
 
     Warnings name pages and kinds only, never the text found. Text that looks
-    filled in, and a page with no text layer (a scan cannot be checked yet:
-    offline OCR is a later step), need the user's "this form is blank". Text
-    the bundled blank template does not have only warns.
+    filled in needs the user's "this form is blank". A page with no text layer
+    is read by offline OCR (page_ocr: bundled models, scanned by
+    identifier_detect.scan() before it is used here); only when OCR did not
+    run (missing, failed, or ocr=False) does it keep the "not checked" warning
+    and need the confirm. A page whose original has text that sanitizing
+    removed is not OCR'd (it is not a scan) and keeps that warning too.
+    ocr_hits is True when OCR found identifier text: the page image would
+    carry it out, so release() refuses. Text the bundled blank template does
+    not have only warns.
     """
     template = _template(form_id)
     if template is not None and template[1] == original_sha256:
-        return [], False  # byte for byte the bundled official blank form
+        return [], False, False  # byte for byte the bundled official blank form
     reader = _reader(data)
     warnings: list[str] = []
     confirm = False
+    ocr_hits = False
     pages = reader.pages
+    first = _reader(original) if original is not None else None
     if template is None:
         warnings.append("there is no bundled blank template to compare with")
     elif len(template[0]) != len(pages):
@@ -1067,12 +1100,25 @@ def _confirm_text(data: bytes, form_id: str, original_sha256: str):
         except Exception:
             words = []
         if not words:
-            warnings.append(
-                f"page {n}: no text layer, so it was not checked for filled-in"
-                " answers (it may be a scan); check it yourself"
-            )
-            confirm = True
-            continue
+            scan = first is None or not _has_words(first, n - 1)
+            read = _ocr_page(data, n) if ocr and scan else None
+            if read is None:
+                warnings.append(
+                    f"page {n}: no text layer, so it was not checked for filled-in"
+                    " answers (it may be a scan); check it yourself"
+                )
+                confirm = True
+                continue
+            if read.kinds:
+                warnings.append(
+                    f"page {n}: OCR read text that looks filled in"
+                    f" ({', '.join(sorted(read.kinds))})"
+                )
+                confirm = ocr_hits = True
+                continue
+            words = read.text.split()
+            if not words:
+                continue
         extra = words
         if template is not None:
             known = template[0][n - 1] if n <= len(template[0]) else frozenset()
@@ -1088,7 +1134,7 @@ def _confirm_text(data: bytes, form_id: str, original_sha256: str):
                 f"page {n}: has text that looks filled in ({', '.join(kinds)})"
             )
             confirm = True
-    return warnings, confirm
+    return warnings, confirm, ocr_hits
 
 
 CONSENT_PROMPT = (
@@ -1127,12 +1173,23 @@ class PreparedRequest:
         "_fields_json",
         "_source_sha256",
         "_ledger",
+        "_ocr_hits",
     )
 
     def __init__(
-        self, payload, data, *, flat, warnings, confirm, source_sha256=None, ledger=None
+        self,
+        payload,
+        data,
+        *,
+        flat,
+        warnings,
+        confirm,
+        source_sha256=None,
+        ledger=None,
+        ocr_hits=False,
     ):
         self._payload = payload
+        self._ocr_hits = bool(ocr_hits)
         self._source_sha256 = source_sha256
         self._ledger = ledger
         self._fields_json = json.dumps(payload["form"]["fields"], sort_keys=True)
@@ -1235,6 +1292,8 @@ class PreparedRequest:
         if fields != self._fields_json:
             raise FieldMapError("consent: the field list changed after it was shown")
         check_outbound(self._payload, self._bytes)
+        if self._ocr_hits:
+            raise FieldMapError("form: OCR found identifier text on a scanned page")
         # Local only: {original form hash -> request id}. The request id is
         # form.sha256, already in the payload; nothing new is sent. Without a
         # ledger argument the real one in the app data folder is used.
@@ -1250,7 +1309,13 @@ class PreparedRequest:
 
 
 def prepare_request(
-    form_pdf: Path, *, form_id: str, names_source, bot_id: str, ledger=None
+    form_pdf: Path,
+    *,
+    form_id: str,
+    names_source,
+    bot_id: str,
+    ledger=None,
+    ocr: bool = True,
 ) -> PreparedRequest:
     """Check and prepare the outbound field-map request; release nothing.
 
@@ -1268,7 +1333,9 @@ def prepare_request(
     the original form bytes and the request id (the payload's form.sha256),
     locally; form_convert refuses a map that does not answer that request.
     It adds nothing to the payload. ledger=None (the default) uses
-    request_ledger.Ledger(), the file in the app data folder.
+    request_ledger.Ledger(), the file in the app data folder. ocr=True (the
+    default) reads pages that have no text layer with offline OCR
+    (page_ocr); ocr=False skips it and keeps their "not checked" warning.
     """
     names = sorted(_names(list(names_source.data_point_names(bot_id)), "$.data_points"))
     if not names:
@@ -1300,7 +1367,9 @@ def prepare_request(
     }
     check_outbound(payload, clean)
     source_sha256 = hashlib.sha256(original).hexdigest()
-    warnings, confirm = _confirm_text(clean, form_id, source_sha256)
+    warnings, confirm, ocr_hits = _confirm_text(
+        clean, form_id, source_sha256, ocr=ocr, original=original
+    )
     if unnamed:
         warnings.append(f"{unnamed} form fields have no name and were left out")
     return PreparedRequest(
@@ -1311,6 +1380,7 @@ def prepare_request(
         confirm=confirm,
         source_sha256=source_sha256,
         ledger=ledger,
+        ocr_hits=ocr_hits,
     )
 
 

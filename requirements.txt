@@ -14,3 +14,9 @@ sqlcipher3==0.6.4; sys_platform == "win32"
 argon2-cffi==25.1.0
 # Field-map JSON Schema checks (schemas/field_map.schema.json), local only.
 jsonschema==4.26.0
+# Offline OCR for pages with no text layer (scripts/page_ocr.py). Apache-2.0;
+# the wheel bundles its OCR models (PP-OCRv6 small det and rec, PP-OCR mobile
+# v2.0 cls; Apache-2.0), so nothing is downloaded. onnxruntime (MIT) runs them;
+# 1.23.2 is the newest with wheels for Python 3.10 and Intel Macs.
+rapidocr==3.10.0
+onnxruntime==1.23.2

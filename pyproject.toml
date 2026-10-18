@@ -17,6 +17,8 @@ dependencies = [
     "sqlcipher3==0.6.4; sys_platform == 'win32'",
     "argon2-cffi==25.1.0",
     "jsonschema==4.26.0",
+    "rapidocr==3.10.0",
+    "onnxruntime==1.23.2",
 ]
 
 [project.scripts]
@@ -37,6 +39,7 @@ py-modules = [
     "local_search",
     "master_data",
     "master_ui",
+    "page_ocr",
     "proposed_issues",
     "qt_ui",
     "records_vault",
