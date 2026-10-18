@@ -218,6 +218,6 @@ def test_review_local_stored_and_logged(vault, monkeypatch):
 # ---- docs -----------------------------------------------------------------
 @pytest.mark.parametrize("path", ["SAFETY.md", "skills/proposed-issues/SKILL.md"])
 def test_docs_user_review_is_final_check(path):
-    text = (ROOT / path).read_text()
+    text = " ".join((ROOT / path).read_text().split())
     assert "the user's review is the final check" in text
     assert "Yes or No" in text and "USER_UPDATED" in text

@@ -241,7 +241,7 @@ def test_unlabeled_text_not_name_redacted():
 
 
 def test_safety_documents_unlabeled_names_and_pii():
-    s = (ROOT / "SAFETY.md").read_text()
+    s = " ".join((ROOT / "SAFETY.md").read_text().split())
     assert "Names without a label are not redacted" in s
     assert "treat the report as containing PII" in s
 

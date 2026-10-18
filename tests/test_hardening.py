@@ -91,7 +91,7 @@ def test_f4_address_phone(s, leak):
 # F5: SAFETY claim vs. behavior (names never redacted)
 def test_f5_safety_names_claim_honest():
     assert "Jane Fakename" in R("seen with Jane Fakename")  # documents behavior
-    txt = (ROOT / "SAFETY.md").read_text()
+    txt = " ".join((ROOT / "SAFETY.md").read_text().split())
     if "third parties" in txt:
         assert re.search(
             r"names? (are|is) not (auto(matically)?[- ])?redacted", txt, re.I
