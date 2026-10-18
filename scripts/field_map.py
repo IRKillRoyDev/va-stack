@@ -8,25 +8,37 @@ asks for that the request did not hold. The program then fills the values
 locally. Identifier NAMES (ssn, date_of_birth, mailing_address, ...) are in
 the catalog because real VA forms ask for them; their VALUES never leave.
 
-This module is the gate for both directions. It is NOT wired up yet:
-nothing in va-stack calls it, and nothing is sent anywhere.
+This module is the gate for both directions. No window uses it yet, and
+it sends nothing itself: release() hands the payload and the bytes to the
+caller, and only after the user's yes.
 
 - The catalog, schemas/data_points.json, is the one list of data-point names
   (with a category and a type). Names are screened by catalog membership.
   The schema's data_point enum is written from it by
   tools/sync_field_map_enum.py, and this module refuses a drifted schema.
-- build_request() is the one function that makes the outbound payload. It
-  asks the vault only for data-point names (names_source.data_point_names()),
-  keeps only catalog names, reads the blank form for its hash, page count and
-  page sizes as displayed (after /Rotate), and runs check_outbound().
-- check_outbound() must pass before anything leaves: the schema
-  (schemas/field_map.schema.json) plus code checks that reject unknown keys,
-  unknown names and form ids or names shaped like a value
-  (identifier_blocklist.blocked_value, dates, long free text).
+- prepare_request() is the one function that makes the outbound payload. It
+  asks the vault only for data-point names
+  (names_source.data_point_names(bot_id)), keeps only catalog names, takes the
+  form id from the forms catalog (skills/proposed-issues/forms.json) and the
+  form name from that form's catalog title, makes a sanitized copy of the
+  blank form (sanitize_blank_form: page content only, no filled values,
+  metadata, earlier revisions, scripts, attachments or annotations; checked
+  again by verify_sanitized), and measures that copy: its sha256, page count
+  and whole-point page sizes as displayed (after /Rotate). It returns a
+  PreparedRequest, which releases nothing before the user's yes (and, for a
+  flat form or one whose page text looks filled in, the user's "this form is
+  blank"). ask_send_consent() asks in a terminal.
+- check_outbound(payload, form_bytes) must pass before anything leaves: the
+  schema (schemas/field_map.schema.json) plus code checks that reject unknown
+  keys, unknown names, form ids outside the forms catalog, any form name but
+  the catalog title, sizes that are not whole points, and a hash, page count
+  or size that does not match the exact bytes that leave.
 - parse_field_map() reads a bot's answer: size and nesting caps, strict JSON,
   the schema, then the catalog, the request it answers, page and rect bounds
   on the displayed page, field types per data point, and labels screened by
-  blocked_value. to_pdf_rect() turns a displayed rect back into PDF space.
+  blocked_value and a labeled-name check (local_search.redact NAME, after
+  identifier_blocklist's normalization). to_pdf_rect() turns a displayed rect
+  back into PDF space.
 
 Errors name the place (a JSON path such as $.fields[2].label) and the rule,
 never the offending text. Which VALUES go into a draft is still decided by
@@ -45,14 +57,19 @@ import hashlib
 import importlib.util
 import io
 import json
+import math
+import os
 import re
 import sys
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject, NameObject
 
-_SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
+_ROOT = Path(__file__).resolve().parents[1]
+_SCHEMAS = _ROOT / "schemas"
+FORMS_PATH = _ROOT / "skills" / "proposed-issues" / "forms.json"
 SCHEMA_PATH = _SCHEMAS / "field_map.schema.json"
 CATALOG_PATH = _SCHEMAS / "data_points.json"
 SCHEMA_VERSION = 1
@@ -71,6 +88,7 @@ def _load(name):
 
 
 identifier_blocklist = _load("identifier_blocklist")
+local_search = _load("local_search")
 
 
 class FieldMapError(ValueError):
@@ -156,7 +174,8 @@ MAX_RAW_BYTES = 256 * 1024
 MAX_DEPTH = 6
 MIN_SIDE = 4.0  # points; a smaller box cannot hold a mark or a letter
 LABEL_MAX, LABEL_WORDS = 60, 12  # "Date you were released from active duty"
-FORM_NAME_MAX, FORM_NAME_WORDS = 80, 12
+PAGE_SIDE_MIN, PAGE_SIDE_MAX = 1, 20000  # whole points
+FORM_ID_DIGITS = 8  # a form number never needs more digits than this
 
 REQUEST_KEYS = frozenset({"schema_version", "kind", "form", "data_points"})
 FORM_KEYS = frozenset({"id", "name", "sha256", "page_count", "page_sizes"})
@@ -168,8 +187,9 @@ FIELD_KEYS = frozenset(
 FIELD_REQUIRED = frozenset({"page", "rect", "type", "data_point"})
 
 _TEXT = re.compile(r"[A-Za-z][A-Za-z0-9 ().,'/&:-]*")
-# VA form numbers: "21-526EZ", "VA 21-0781", "20-0995", "21P-534EZ", "10182".
-_FORM_ID = re.compile(r"(?:VA )?(?:[0-9]{2}[A-Z]{0,2}-)?[0-9]{3,5}[A-Z]{0,3}")
+# The shape of a catalog form number: "21-526EZ", "20-0995", "21P-534EZ",
+# "10182". The id must also be a key of the forms catalog.
+_FORM_ID = re.compile(r"(?:[0-9]{2}[A-Z]{0,2}-)?[0-9]{3,5}[A-Z]{0,3}")
 _DATEISH = re.compile(
     r"\d{1,2}\s*[/.-]\s*\d{1,2}"
     r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*\d",
@@ -199,6 +219,37 @@ def _schema() -> dict:
         )
     Draft202012Validator.check_schema(schema)
     return schema
+
+
+@functools.lru_cache(maxsize=1)
+def _forms() -> dict:
+    data = json.loads(FORMS_PATH.read_text(encoding="utf-8"))
+    out = {}
+    for form_id, entry in data["forms"].items():
+        template = _ROOT / data["fixtures_dir"] / f"{form_id}.json"
+        out[form_id] = {"title": entry["title"], "template": template}
+    return out
+
+
+def form_catalog() -> dict[str, str]:
+    """Return {form id: catalog title} for the forms a request may name.
+
+    When to use: to offer the user a form to map; the request's form id must
+    be one of these keys and its name that key's title.
+    """
+    return {k: v["title"] for k, v in _forms().items()}
+
+
+@functools.lru_cache(maxsize=8)
+def _template(form_id: str):
+    """The bundled blank form's page text and file hash, or None."""
+    path = _forms()[form_id]["template"]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        pages = tuple(frozenset(str(p).split()) for p in data["pages"])
+        return pages, str(data.get("pdf_sha256", ""))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def load_schema() -> dict:
@@ -239,8 +290,21 @@ def check_name(name, where: str = "$.data_point") -> str:
     are fine here, because only names leave. Values never pass through.
     """
     if type(name) is not str or name not in CATALOG:
-        raise FieldMapError(f"{where}: not a catalog data-point name")
+        raise FieldMapError(
+            f"{where}: not a catalog data-point name;"
+            f" valid names: {', '.join(sorted(CATALOG))}"
+        )
     return name
+
+
+def _labeled_name(text: str) -> bool:
+    """True when redact finds a labeled person's name ("Veteran: Jane ...").
+
+    Runs on identifier_blocklist's normalization (marks and zero-width
+    characters stripped, NFKC), the same one the identifier check uses.
+    """
+    cleaned = identifier_blocklist._clean(text)
+    return bool(local_search.redact(cleaned)[1].get("NAME"))
 
 
 def _check_text(text, where: str, max_len: int, max_words: int) -> str:
@@ -254,25 +318,38 @@ def _check_text(text, where: str, max_len: int, max_words: int) -> str:
         raise FieldMapError(f"{where}: looks like a date")
     if identifier_blocklist.blocked_value(text) is not None:
         raise FieldMapError(f"{where}: looks like an identifier value")
+    if _labeled_name(text):
+        raise FieldMapError(f"{where}: looks like a person's name")
     return text
 
 
 def check_label(label, where: str = "$.label") -> str:
     """Return a short printed label ("Item 123", "Box 13a") if it carries no
-    value (blocked_value, dates, long text), else raise."""
+    value (blocked_value, dates, long text, a labeled name), else raise."""
     return _check_text(label, where, LABEL_MAX, LABEL_WORDS)
 
 
 def _check_form_id(form_id) -> str:
-    if type(form_id) is not str or not _FORM_ID.fullmatch(form_id):
-        raise FieldMapError("$.form.id: must be a VA form number")
-    if identifier_blocklist.blocked_value(form_id) is not None:
-        raise FieldMapError("$.form.id: looks like an identifier value")
+    if type(form_id) is not str or form_id not in _forms():
+        raise FieldMapError(
+            "$.form.id: not a form in the forms catalog"
+            " (skills/proposed-issues/forms.json)"
+        )
+    if not _FORM_ID.fullmatch(form_id) or (
+        sum(ch.isdigit() for ch in form_id) > FORM_ID_DIGITS
+    ):
+        raise FieldMapError("$.form.id: not shaped like a form number")
+    if identifier_blocklist.blocked_value(form_id) is not None or (
+        _labeled_name(form_id)
+    ):
+        raise FieldMapError("$.form.id: looks like an identifier value or a name")
     return form_id
 
 
-def _check_form_name(name) -> str:
-    return _check_text(name, "$.form.name", FORM_NAME_MAX, FORM_NAME_WORDS)
+def _check_form_name(form_id: str, name) -> str:
+    if type(name) is not str or name != _forms()[form_id]["title"]:
+        raise FieldMapError("$.form.name: must be the catalog title of $.form.id")
+    return name
 
 
 def _names(raw, where: str) -> list[str]:
@@ -286,12 +363,8 @@ def _names(raw, where: str) -> list[str]:
     return names
 
 
-def check_outbound(payload) -> dict:
-    """Raise unless payload is a names-only field-map request. Returns it.
-
-    When to use: on every request, right before it would leave the computer
-    (build_request() calls it on its own output).
-    """
+def _check_request(payload) -> dict:
+    """Every check on a request that needs no form bytes."""
     _keys(payload, REQUEST_KEYS, "$", REQUEST_KEYS)
     _keys(payload["form"], FORM_KEYS, "$.form", FORM_KEYS)
     sizes = payload["form"]["page_sizes"]
@@ -303,12 +376,38 @@ def check_outbound(payload) -> dict:
     form = payload["form"]
     _whole(payload["schema_version"], "$.schema_version")
     _whole(form["page_count"], "$.form.page_count")
+    for k, size in enumerate(sizes):
+        for side in ("width", "height"):
+            where = f"$.form.page_sizes[{k}].{side}"
+            _whole(size[side], where)
+            if not PAGE_SIDE_MIN <= size[side] <= PAGE_SIDE_MAX:
+                raise FieldMapError(f"{where}: out of range")
     _check_form_id(form["id"])
-    _check_form_name(form["name"])
+    _check_form_name(form["id"], form["name"])
     if form["page_count"] != len(sizes):
         raise FieldMapError("$.form.page_count: does not match page_sizes")
     if not _names(payload["data_points"], "$.data_points"):
         raise FieldMapError("$.data_points: none")
+    return payload
+
+
+def check_outbound(payload, form_bytes) -> dict:
+    """Raise unless payload is a names-only request for exactly form_bytes.
+
+    When to use: on every request, right before it would leave the computer
+    (prepare_request() and PreparedRequest.release() call it). form_bytes
+    are the exact bytes that leave with it: the hash, page count and page
+    sizes are recomputed from them, never taken from the payload, and they
+    must pass verify_sanitized(). Returns payload.
+    """
+    _check_request(payload)
+    if type(form_bytes) is not bytes:
+        raise FieldMapError("form: the bytes that leave must be bytes")
+    if hashlib.sha256(form_bytes).hexdigest() != payload["form"]["sha256"]:
+        raise FieldMapError("$.form.sha256: does not match the bytes that leave")
+    verify_sanitized(form_bytes)
+    if _page_sizes(form_bytes) != payload["form"]["page_sizes"]:
+        raise FieldMapError("$.form.page_sizes: do not match the bytes that leave")
     return payload
 
 
@@ -352,49 +451,436 @@ def to_pdf_rect(rect, *, rotation, box) -> list[float]:
 
 
 def _displayed_size(page) -> dict:
+    """The page's crop box as displayed (after /Rotate), in whole points.
+
+    Sides are rounded up, so a value cannot hide in the low bits of a float.
+    """
     box = page.cropbox
-    width, height = float(box.width), float(box.height)
+    width, height = math.ceil(float(box.width)), math.ceil(float(box.height))
     if _rotation(int(page.rotation)) in (90, 270):
         width, height = height, width
+    for side in (width, height):
+        if not PAGE_SIDE_MIN <= side <= PAGE_SIDE_MAX:
+            raise FieldMapError("form: page size out of range")
     return {"width": width, "height": height}
 
 
-def build_request(
-    form_pdf: Path, *, form_id: str, form_name: str, names_source
-) -> dict:
-    """Build the outbound field-map request from names only.
-
-    When to use: the only way to make a request. names_source is the vault
-    (or a stand-in); only its data_point_names() is called, so no value can
-    be read. The blank form is read for its sha256, page count and page
-    sizes as displayed (crop box, after /Rotate). Raises FieldMapError on
-    any value-shaped or unknown content.
-    """
-    names = _names(list(names_source.data_point_names()), "$.data_points")
-    if not names:
-        raise FieldMapError("$.data_points: none")
-    _check_form_id(form_id)
-    _check_form_name(form_name)
-    data = Path(form_pdf).read_bytes()
+def _reader(data: bytes) -> PdfReader:
     try:
-        sizes = [_displayed_size(p) for p in PdfReader(io.BytesIO(data)).pages]
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted:
+            raise FieldMapError("form: an encrypted PDF cannot be checked")
+        _ = len(reader.pages)
+        return reader
+    except FieldMapError:
+        raise
     except Exception as exc:  # pypdf raises many kinds on a broken file
+        raise FieldMapError("form: not a readable PDF") from exc
+
+
+def _page_sizes(data: bytes) -> list[dict]:
+    reader = _reader(data)
+    try:
+        sizes = [_displayed_size(p) for p in reader.pages]
+    except FieldMapError:
+        raise
+    except Exception as exc:
         raise FieldMapError("form: not a readable PDF") from exc
     if not 1 <= len(sizes) <= MAX_PAGES:
         raise FieldMapError("form: page count out of range")
+    return sizes
+
+
+# What a page of the sanitized copy keeps: its size, its look and its text.
+PAGE_KEEP = frozenset(
+    {"/Type", "/Parent", "/MediaBox", "/CropBox", "/Rotate", "/Resources", "/Contents"}
+)
+# Keys that can carry filled-in answers, metadata, scripts or files; none may
+# appear anywhere in the sanitized copy.
+FORBIDDEN_KEYS = frozenset(
+    {
+        "/AcroForm",
+        "/Annots",
+        "/AA",
+        "/OpenAction",
+        "/JS",
+        "/JavaScript",
+        "/Names",
+        "/EmbeddedFile",
+        "/EmbeddedFiles",
+        "/AF",
+        "/Metadata",
+        "/PieceInfo",
+        "/Info",
+        "/Prev",
+        "/XFA",
+        "/V",
+        "/DV",
+        "/AP",
+        "/AS",
+        "/URI",
+        "/Launch",
+        "/SubmitForm",
+        "/ImportData",
+    }
+)
+FORBIDDEN_TYPES = frozenset(
+    {"/Annot", "/Filespec", "/EmbeddedFile", "/Metadata", "/Action"}
+)
+
+
+def _scrub(node, seen: set) -> None:
+    """Remove FORBIDDEN_KEYS from every dictionary reachable from node."""
+    stack = [node]
+    while stack:
+        obj = stack.pop()
+        if isinstance(obj, IndirectObject):
+            key = (obj.idnum, obj.generation)
+            if key in seen:
+                continue
+            seen.add(key)
+            obj = obj.get_object()
+        if isinstance(obj, DictionaryObject):
+            for key in [k for k in obj if k in FORBIDDEN_KEYS]:
+                del obj[key]
+            stack.extend(obj.values())
+        elif isinstance(obj, ArrayObject):
+            stack.extend(obj)
+
+
+def sanitize_blank_form(data: bytes) -> bytes:
+    """Return a sanitized copy of a blank form, or raise FieldMapError.
+
+    The copy is a full rewrite with one revision (no /Prev, no older xref
+    sections), holding only each page's size, rotation, resources and
+    content. Form fields and their values (/V, /DV), appearance streams
+    (/AP, /AS) and every other annotation are dropped, and so are the
+    document /Info, XMP /Metadata, /PieceInfo, scripts (/AA, /OpenAction,
+    /JS, /Names JavaScript), attachments (/EmbeddedFiles, /AF) and links.
+    The copy is read back and checked by verify_sanitized(); a copy that
+    fails is refused, never sent. Page text drawn into the content stays
+    (it is the blank form's printing); see PreparedRequest.warnings.
+    When to use: inside prepare_request(); exposed for tests.
+    """
+    reader = _reader(data)
+    writer = PdfWriter()
+    try:
+        for page in reader.pages:
+            for key in [k for k in page if k not in PAGE_KEEP]:
+                del page[key]
+            writer.add_page(page)
+        _scrub(writer._root_object, set())
+        for key in [k for k in writer._root_object if k not in ("/Type", "/Pages")]:
+            del writer._root_object[key]
+        writer.metadata = None
+        out = io.BytesIO()
+        writer.write(out)
+    except FieldMapError:
+        raise
+    except Exception as exc:
+        raise FieldMapError("form: could not make a sanitized copy") from exc
+    clean = out.getvalue()
+    verify_sanitized(clean)
+    return clean
+
+
+def verify_sanitized(data: bytes) -> None:
+    """Raise FieldMapError unless data reads back as a sanitized copy.
+
+    Checks every object in the file (not only the reachable ones): no
+    FORBIDDEN_KEYS, no annotation, file or metadata object, a trailer with
+    only /Size, /Root and /ID, a catalog with only /Type and /Pages, pages
+    with only PAGE_KEEP keys, and one revision (one %%EOF, one startxref).
+    Errors name the rule, never the content found.
+    When to use: on the copy sanitize_blank_form() made, and again in
+    check_outbound() on the bytes that leave.
+    """
+    if type(data) is not bytes:
+        raise FieldMapError("form: the sanitized copy must be bytes")
+    if data.count(b"%%EOF") != 1 or data.count(b"startxref") != 1:
+        raise FieldMapError("form: the sanitized copy has more than one revision")
+    reader = _reader(data)
+    try:
+        trailer = reader.trailer
+        if set(trailer) - {"/Size", "/Root", "/ID"}:
+            raise FieldMapError("form: the sanitized copy has extra trailer keys")
+        root = trailer["/Root"].get_object()
+        if set(root) - {"/Type", "/Pages"}:
+            raise FieldMapError("form: the sanitized copy has extra catalog keys")
+        for page in reader.pages:
+            if set(page) - PAGE_KEEP:
+                raise FieldMapError("form: a sanitized page has extra keys")
+        ids = [
+            IndirectObject(idnum, gen, reader)
+            for gen, entries in reader.xref.items()
+            for idnum in entries
+        ]
+        ids += [IndirectObject(idnum, 0, reader) for idnum in reader.xref_objStm]
+        for ref in ids:
+            obj = ref.get_object()
+            if isinstance(obj, DictionaryObject):
+                if set(obj) & FORBIDDEN_KEYS:
+                    raise FieldMapError(
+                        "form: the sanitized copy still has a forbidden part"
+                    )
+                kind = obj.get("/Type")
+                if kind in FORBIDDEN_TYPES or obj.get("/Subtype") == NameObject("/XML"):
+                    raise FieldMapError(
+                        "form: the sanitized copy still has a forbidden object"
+                    )
+    except FieldMapError:
+        raise
+    except Exception as exc:
+        raise FieldMapError("form: the sanitized copy could not be checked") from exc
+
+
+def _confirm_text(data: bytes, form_id: str, original_sha256: str):
+    """Local checks of the page text: (warnings, needs_confirm).
+
+    Warnings name pages and kinds only, never the text found. Text that looks
+    filled in, and a page with no text layer (a scan cannot be checked yet:
+    offline OCR is a later step), need the user's "this form is blank". Text
+    the bundled blank template does not have only warns.
+    """
+    template = _template(form_id)
+    if template is not None and template[1] == original_sha256:
+        return [], False  # byte for byte the bundled official blank form
+    reader = _reader(data)
+    warnings: list[str] = []
+    confirm = False
+    pages = reader.pages
+    if template is None:
+        warnings.append("there is no bundled blank template to compare with")
+    elif len(template[0]) != len(pages):
+        warnings.append(
+            f"the form has {len(pages)} pages; the bundled blank template has"
+            f" {len(template[0])}"
+        )
+    for n, page in enumerate(pages, 1):
+        try:
+            words = (page.extract_text() or "").split()
+        except Exception:
+            words = []
+        if not words:
+            warnings.append(
+                f"page {n}: no text layer, so it was not checked for filled-in"
+                " answers (it may be a scan); check it yourself"
+            )
+            confirm = True
+            continue
+        extra = words
+        if template is not None:
+            known = template[0][n - 1] if n <= len(template[0]) else frozenset()
+            extra = [w for w in words if w not in known]
+            if extra:
+                warnings.append(
+                    f"page {n}: has {len(extra)} words the bundled blank template"
+                    " does not have"
+                )
+        kinds = sorted(local_search.redact(" ".join(extra))[1]) if extra else []
+        if kinds:
+            warnings.append(
+                f"page {n}: has text that looks filled in ({', '.join(kinds)})"
+            )
+            confirm = True
+    return warnings, confirm
+
+
+CONSENT_PROMPT = (
+    "VA Stack is ready to give your AI bot a sanitized copy of the blank form"
+    " and the names of the data points your vault holds: names only, never"
+    " their values. The copy has no filled-in answers, metadata, earlier"
+    " versions, scripts, attachments or comments. Your AI bot sends what it"
+    " reads to the AI service it runs on. Nothing is sent unless you answer yes."
+)
+BLANK_QUESTION = (
+    "Is this form blank, with nothing of yours typed or filled in? Type 'yes'"
+    " only if it is: "
+)
+GIVE_QUESTION = "Type 'yes' to give these to your AI bot: "
+
+
+class PreparedRequest:
+    """A checked field-map request that releases nothing before a yes.
+
+    request is a copy of the payload, for showing and for parse_field_map().
+    The sanitized bytes stay inside until release(), which needs one answer
+    of True (and blank_confirmed=True when needs_blank_confirm) and works
+    once. When to use: from prepare_request(); show prompt_text() (or call
+    ask_consent()), record the user's answer with answer(), then
+    release() and hand the result to the bot.
+    """
+
+    __slots__ = (
+        "_payload",
+        "_bytes",
+        "_flat",
+        "_warnings",
+        "_confirm",
+        "_answer",
+        "_released",
+    )
+
+    def __init__(self, payload, data, *, flat, warnings, confirm):
+        self._payload = payload
+        self._bytes = data
+        self._flat = flat
+        self._warnings = tuple(warnings)
+        self._confirm = bool(flat or confirm)
+        self._answer = None
+        self._released = False
+
+    @property
+    def flat(self) -> bool:
+        """True when the form has no form fields (a flat or scanned form)."""
+        return self._flat
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        """What the local checks found: pages and kinds, never text."""
+        return self._warnings
+
+    @property
+    def needs_blank_confirm(self) -> bool:
+        """True when the user must also confirm the form is blank."""
+        return self._confirm
+
+    @property
+    def request(self) -> dict:
+        """A copy of the payload (no bytes)."""
+        return copy.deepcopy(self._payload)
+
+    def prompt_text(self) -> str:
+        """The consent text: what leaves, what never does, and the warnings."""
+        form = self._payload["form"]
+        lines = [
+            CONSENT_PROMPT,
+            "",
+            f"Form: {form['id']} ({form['name']})",
+            f"Pages: {form['page_count']}",
+            f"SHA-256 of the exact copy that leaves: {form['sha256']}",
+            f"Data-point names: {', '.join(self._payload['data_points'])}",
+        ]
+        if self._warnings:
+            lines.append("Warnings:")
+            lines.extend(f"- {w}" for w in self._warnings)
+        if self._confirm:
+            lines.append(
+                "Is this form blank, with nothing of yours typed or filled in?"
+                " You will be asked to confirm."
+            )
+        return "\n".join(lines)
+
+    def answer(self, yes, *, blank_confirmed=False) -> None:
+        """Record the user's one answer (True only for a typed or clicked yes)."""
+        if type(yes) is not bool or type(blank_confirmed) is not bool:
+            raise FieldMapError("consent: the answer must be True or False")
+        if self._answer is not None:
+            raise FieldMapError("consent: this request was already answered")
+        self._answer = (yes, blank_confirmed)
+
+    def consent_detail(self) -> dict:
+        """Flags, counts, the form id and hash, and the names: for the log."""
+        if self._answer is None:
+            raise FieldMapError("consent: not answered yet")
+        return {
+            "answer": "yes" if self._answer[0] else "no",
+            "flat": self._flat,
+            "blank_confirmed": self._answer[1],
+            "warnings": len(self._warnings),
+            "form_id": self._payload["form"]["id"],
+            "form_sha256": self._payload["form"]["sha256"],
+            "names": list(self._payload["data_points"]),
+        }
+
+    def release(self) -> tuple[dict, bytes]:
+        """Return (payload, sanitized bytes) once, after the user's yes."""
+        if self._answer is None or not self._answer[0]:
+            raise FieldMapError("consent: the user has not said yes")
+        if self._confirm and not self._answer[1]:
+            raise FieldMapError("consent: the user has not confirmed the form is blank")
+        if self._released:
+            raise FieldMapError("consent: this request was already released")
+        check_outbound(self._payload, self._bytes)
+        self._released = True
+        return copy.deepcopy(self._payload), self._bytes
+
+
+def prepare_request(
+    form_pdf: Path, *, form_id: str, names_source, bot_id: str
+) -> PreparedRequest:
+    """Check and prepare the outbound field-map request; release nothing.
+
+    When to use: the only way to make a request. names_source is the vault
+    (or a stand-in); only data_point_names(bot_id) is called, so no value can
+    be read. form_id must be a forms-catalog key; the name sent is its
+    catalog title. The blank form is copied by sanitize_blank_form() and the
+    hash, page count and whole-point page sizes are taken from that copy, per
+    run (pypdf output is not assumed to be the same twice). A flat form (no
+    form fields) and one whose page text looks filled in need the user's
+    "this form is blank"; other findings only warn. Raises FieldMapError on
+    any value-shaped or unknown content.
+    """
+    names = _names(list(names_source.data_point_names(bot_id)), "$.data_points")
+    if not names:
+        raise FieldMapError("$.data_points: none")
+    _check_form_id(form_id)
+    original = Path(form_pdf).read_bytes()
+    reader = _reader(original)
+    try:
+        flat = not reader.get_fields()
+    except Exception as exc:
+        raise FieldMapError("form: not a readable PDF") from exc
+    clean = sanitize_blank_form(original)
+    sizes = _page_sizes(clean)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "kind": "field_map_request",
         "form": {
             "id": form_id,
-            "name": form_name,
-            "sha256": hashlib.sha256(data).hexdigest(),
+            "name": _forms()[form_id]["title"],
+            "sha256": hashlib.sha256(clean).hexdigest(),
             "page_count": len(sizes),
             "page_sizes": sizes,
         },
         "data_points": sorted(names),
     }
-    return check_outbound(payload)
+    check_outbound(payload, clean)
+    warnings, confirm = _confirm_text(
+        clean, form_id, hashlib.sha256(original).hexdigest()
+    )
+    return PreparedRequest(
+        payload, clean, flat=flat, warnings=warnings, confirm=confirm
+    )
+
+
+def _stdin_is_terminal() -> bool:
+    try:
+        return os.isatty(sys.stdin.fileno())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def ask_consent(
+    prepared: PreparedRequest, *, input_fn=input, print_fn=print, is_terminal=None
+) -> bool:
+    """Show the consent text in a terminal and record the user's answer.
+
+    When to use: before release() when no window asks. Without an
+    interactive terminal it records a no and asks nothing. The user must type
+    yes; a flat or filled-looking form also needs a typed yes to "Is this form
+    blank". Returns True only when release() may now go ahead.
+    """
+    if not (is_terminal or _stdin_is_terminal)():
+        prepared.answer(False)
+        return False
+    print_fn(prepared.prompt_text())
+    yes = input_fn(GIVE_QUESTION).strip().lower() == "yes"
+    blank = False
+    if yes and prepared.needs_blank_confirm:
+        blank = input_fn(BLANK_QUESTION).strip().lower() == "yes"
+    prepared.answer(yes, blank_confirmed=blank)
+    return yes and (blank or not prepared.needs_blank_confirm)
 
 
 def _depth_ok(text: str) -> bool:
@@ -508,7 +994,7 @@ def parse_field_map(raw, request: dict) -> dict:
     values in labels, pages or boxes off the displayed page, or field types
     that do not fit the data point.
     """
-    check_outbound(request)
+    _check_request(request)
     obj = _strict_json(raw)
     _keys(obj, MAP_KEYS, "$", MAP_KEYS)
     if not isinstance(obj["fields"], list):

@@ -292,9 +292,33 @@ CREATE TABLE IF NOT EXISTS file_feedback (
     missed_pii TEXT NOT NULL, ts TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS review_draft (
     id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL, ts TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS data_points (
+    name TEXT PRIMARY KEY, value TEXT NOT NULL, ts TEXT NOT NULL);
 """
 # A saved-for-later review state larger than this is refused.
 DRAFT_MAX = 1_000_000
+# A data-point value (an answer the program may fill into a form) longer than
+# this is refused; the longest catalog text is a short address or remark.
+DATA_POINT_VALUE_MAX = 5000
+_FIELD_MAP = None
+
+
+def _field_map():
+    """scripts/field_map.py, loaded on first use (for the catalog names)."""
+    global _FIELD_MAP
+    if _FIELD_MAP is None:
+        _FIELD_MAP = sys.modules.get("field_map")
+    if _FIELD_MAP is None:
+        spec = importlib.util.spec_from_file_location(
+            "field_map", Path(__file__).resolve().parent / "field_map.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["field_map"] = mod
+        spec.loader.exec_module(mod)
+        _FIELD_MAP = mod
+    return _FIELD_MAP
+
+
 # Flag on a row whose reading the user replaced with their own typed text.
 USER_UPDATED = "USER_UPDATED"
 REVIEW_ANSWERS = ("yes", "no")
@@ -1170,6 +1194,100 @@ class Vault:
         self._check_open()
         bot_id = self._bot(bot_id)
         self._log(bot_id, "form_draft_made", detail)
+
+    def set_data_point(self, name: str, value: str, bot_id: str) -> None:
+        """Store (or replace) the value of one catalog data point.
+
+        When to use: from the master data window (a later step) when the user
+        types a value. name must be a name in schemas/data_points.json; value
+        is short text. The value stays in the encrypted vault: the log keeps
+        only a keyed hash of the name, and errors never echo either.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        if type(name) is not str or name not in _field_map().CATALOG:
+            raise VaultError("data point: not a catalog data-point name")
+        if type(value) is not str or not value.strip():
+            raise VaultError("data point: the value must be non-empty text")
+        if len(value) > DATA_POINT_VALUE_MAX:
+            raise VaultError("data point: the value is too long")
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO data_points (name, value, ts) VALUES (?, ?, ?)",
+                (name, value, ts),
+            )
+        self._log(bot_id, "data_point_set", {"name_mac": self._mac(name)})
+
+    def data_point_names(self, bot_id: str) -> list[str]:
+        """Return the sorted catalog names that hold a value, never a value.
+
+        When to use: field_map.prepare_request() calls this, and only this,
+        to say which data points the vault can fill. The log keeps the count
+        and a keyed hash of the list, not the names.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        catalog = _field_map().CATALOG
+        rows = self._conn.execute("SELECT name FROM data_points ORDER BY name")
+        names = [r[0] for r in rows if r[0] in catalog]
+        self._log(
+            bot_id,
+            "data_point_names",
+            {"count": len(names), "names_mac": self._mac(json.dumps(names))},
+        )
+        return names
+
+    def record_field_map_answer(self, detail: dict, bot_id: str) -> None:
+        """Log the user's answer to a field-map consent prompt.
+
+        When to use: after PreparedRequest.answer(), with its
+        consent_detail(). Logs the yes or no, the flat and blank-confirmed
+        flags, the warning count and the catalog form id, plus keyed hashes
+        of the form's sha256 and of the names list; never the names.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        fm = _field_map()
+        keys = {
+            "answer",
+            "flat",
+            "blank_confirmed",
+            "warnings",
+            "form_id",
+            "form_sha256",
+            "names",
+        }
+        ok = (
+            isinstance(detail, dict)
+            and set(detail) == keys
+            and detail["answer"] in ("yes", "no")
+            and type(detail["flat"]) is bool
+            and type(detail["blank_confirmed"]) is bool
+            and type(detail["warnings"]) is int
+            and detail["warnings"] >= 0
+            and type(detail["form_id"]) is str
+            and detail["form_id"] in fm.form_catalog()
+            and type(detail["form_sha256"]) is str
+            and re.fullmatch(r"[0-9a-f]{64}", detail["form_sha256"]) is not None
+            and isinstance(detail["names"], list)
+            and all(type(n) is str and n in fm.CATALOG for n in detail["names"])
+        )
+        if not ok:
+            raise VaultError("field map answer: not a known answer record")
+        self._log(
+            bot_id,
+            "field_map_send_answer",
+            {
+                "answer": detail["answer"],
+                "flat": detail["flat"],
+                "blank_confirmed": detail["blank_confirmed"],
+                "warnings": detail["warnings"],
+                "form_id": detail["form_id"],
+                "form_mac": self._mac(detail["form_sha256"]),
+                "names_mac": self._mac(json.dumps(detail["names"])),
+            },
+        )
 
     def close(self) -> None:
         """Zeroize the key, close the database, and lock the session.

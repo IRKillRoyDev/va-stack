@@ -81,10 +81,40 @@ What the code shows, checked by searching every script for network modules
 This scan covers this repository's code. It does not cover what Python,
 Qt, the other packages or your computer's system do on their own.
 
+## Blank forms for your AI bot
+
+For a form without fillable fields, a later version can ask your AI bot
+where each answer goes on the page. The code for this is in
+`scripts/field_map.py`; it is not used by any window yet. When it is used:
+
+- **It shows you what will leave, and gives it to your AI bot only after you
+  answer yes.** Nothing leaves before that, and a no leaves nothing.
+- **What leaves:** a sanitized copy of the blank form, its form number and
+  title from the program's own list of VA forms, its page count and page
+  sizes, the SHA-256 hash of that exact copy, and the names of your data
+  points, never their values (for example `ssn`, never the number).
+- **The copy is cleaned first:** filled-in answers, metadata (such as the
+  author or title), earlier versions saved inside the file, scripts,
+  attachments, comments and links are removed. The copy is checked again
+  after it is made, and it is refused if anything is left.
+- **Flat forms:** if the form has no fillable fields, you are also asked "Is
+  this form blank, with nothing of yours typed or filled in?" The program
+  checks the page text on your computer and warns if it looks filled in, or
+  if a page has no text to check (a scan; offline OCR is not built yet).
+  Such a warning also needs your answer to that question. Text that differs
+  from the bundled blank form only warns.
+- **Your data-point values** stay in the encrypted vault. The access log
+  keeps only counts and keyed hashes of the names, never the names or values.
+
+This is checked by `tests/test_field_map_send.py` and
+`tests/test_vault_data_points.py`.
+
 ## What it never does
 
 - It never submits, files, signs or sends a claim or form to VA or anyone
   else. Drafts are for you to check and finish by hand.
+- It never gives your AI bot a blank form or your data-point names without
+  asking you first, and it never gives it your data-point values.
 - It never changes your original record files. Corrections you type do not
   overwrite the original page text stored in the vault.
 - It never takes your passphrase from the command line or an environment
