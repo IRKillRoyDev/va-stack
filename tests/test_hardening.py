@@ -155,4 +155,8 @@ def test_line_numbers_kept_after_split_identifier(tmp_path):
 
 
 def test_zip_needs_uppercase_state():
-    assert R("lifted 20 boxes at 12345 feet") == "lifted 20 boxes at 12345 feet"
+    # Round 18 ruling: the unlabeled 5-digit run is hidden (accepted as
+    # fail-safe); it is still not read as a ZIP code.
+    out = R("lifted 20 boxes at 12345 feet")
+    assert "12345" not in out and "ADDRESS" not in out, out
+    assert out.startswith("lifted 20 boxes at [REDACTED-") and out.endswith(" feet")

@@ -68,12 +68,15 @@ def test_n1_bare_year_documented_gap():
 
 
 # N4: no bare 7-digit phones
-# Round 17: never phones, but 7-digit runs are hidden as numbers exactly
-# where the form blocklist blocks them (block == redact).
-@pytest.mark.parametrize("s", ["250-5000 ref", "LDL 130-1600", "range 120.1300 units"])
-def test_n4_ranges_not_phones(s):
-    out, counts = ls.redact(s)
-    assert "PHONE" not in counts and "[REDACTED-NUMBER]" in out, out
+# Round 18: never phones. "250-5000 ref" is still hidden (an identifier next
+# to "ref"); the clinical/measurement allowlist frees the other two, in the
+# pane and on forms alike (block == redact).
+def test_n4_ranges_not_phones():
+    out, counts = ls.redact("250-5000 ref")
+    assert "PHONE" not in counts and "[REDACTED-" in out and "5000" not in out, out
+    for s in ("LDL 130-1600", "range 120.1300 units"):
+        out, counts = ls.redact(s)
+        assert out == s and not counts, (out, counts)
 
 
 @pytest.mark.parametrize(
@@ -91,11 +94,15 @@ def test_n4_unlabeled_spaced_phone_now_redacted():
 
 
 # N3: ZIP needs city/street before and end or punctuation after
-@pytest.mark.parametrize(
-    "s", ["Rated OK 12345 today", "Visit IN 12345 days", "ratio, or 12345 cases"]
-)
+@pytest.mark.parametrize("s", ["Rated OK 12345 today", "Visit IN 12345 days"])
 def test_n3_zip_over_redaction(s):
     assert ls.redact(s)[0] == s
+
+
+def test_n3_lowercase_state_word_before_five_digits_is_hidden():
+    # Round 18 ruling: accepted as fail-safe ("or" reads as a state code).
+    out = ls.redact("ratio, or 12345 cases")[0]
+    assert "12345" not in out and "[REDACTED-" in out, out
 
 
 @pytest.mark.parametrize("s", ["Anytown, CO 80202.", "Anytown CO 80202\nnext"])

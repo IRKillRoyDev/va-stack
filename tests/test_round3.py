@@ -90,13 +90,12 @@ def test_n4_no_phone_false_positive(s):
     assert default(s) == s
 
 
-# Round 17: the pane shows what the form blocklist allows and nothing more.
-# These 7-digit runs were always blocked on forms, so the pane now hides them
-# too (they are not shown as phones; they are generic numbers).
+# Round 18: the shared clinical/measurement allowlist frees these former
+# round-17 over-blocks in the pane and on forms alike (block == redact).
 @pytest.mark.parametrize("s", ["dose 100 1000 mg", "flexion 120 1300"])
 def test_n4_seven_digit_runs_hidden_like_the_blocklist(s):
     out, counts = ls.redact(s)
-    assert "PHONE" not in counts and counts.get("NUMBER") == 1, (out, counts)
+    assert out == s and not counts, (out, counts)
 
 
 @pytest.mark.parametrize(
@@ -107,9 +106,15 @@ def test_n4_real_phones_redacted(s):
 
 
 # N3: ZIP only with a real state code in address context
-@pytest.mark.parametrize("s", ["rated OK 12345", "level XX 12345", "rated ok 12345"])
+@pytest.mark.parametrize("s", ["rated OK 12345", "rated ok 12345"])
 def test_n3_zip_no_false_positive(s):
     assert default(s) == s
+
+
+def test_n3_unlabeled_five_digits_after_a_code_is_hidden():
+    # Round 18 ruling: accepted as fail-safe (default-block hides it).
+    out = default("level XX 12345")
+    assert "12345" not in out and out.startswith("level XX [REDACTED-"), out
 
 
 @pytest.mark.parametrize(
