@@ -29,6 +29,7 @@ py-modules = [
     "identifier_blocklist",
     "local_search",
     "proposed_issues",
+    "qt_ui",
     "records_vault",
     "review_session",
     "va_stack_app",

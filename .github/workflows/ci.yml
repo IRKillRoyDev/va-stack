@@ -82,8 +82,8 @@ jobs:
         run: |
           python -c "import tkinter; print('tk', tkinter.TkVersion)"
           set -o pipefail
-          xvfb-run -a pytest -v -rs tests/test_gui_headless.py tests/test_app_gui.py | tee gui.txt
-          grep -q "3 passed" gui.txt
+          xvfb-run -a pytest -v -rs tests/test_gui_headless.py tests/test_app_gui.py tests/test_qt_gui.py | tee gui.txt
+          grep -q "12 passed" gui.txt
           ls -l "$VA_STACK_SHOTS"
       - name: Upload screenshots
         if: always()
@@ -117,9 +117,18 @@ jobs:
           python -m pytest -v -s -rs tests/test_encryption.py
       - name: Pytest (window tests skip without a display)
         shell: bash
+        env:
+          VA_STACK_SHOTS: ${{ github.workspace }}/va-stack-shots
         run: |
           source .venv/bin/activate
           python -m pytest -q -rs
+      - name: Upload screenshots (PySide6, offscreen)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: va-stack-shots-macos
+          path: va-stack-shots/
+          if-no-files-found: error
   windows:
     runs-on: windows-latest
     env:
@@ -154,12 +163,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Pytest (window tests skip without a display)
         shell: pwsh
+        env:
+          VA_STACK_SHOTS: ${{ github.workspace }}/va-stack-shots
         run: |
           # Use Git Bash for the shell-script checks, not the WSL bash.exe stub.
           $env:PATH = "C:\Program Files\Git\bin;" + $env:PATH
           .venv\Scripts\Activate.ps1
           python -m pytest -q -rs
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Upload screenshots (PySide6, offscreen)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: va-stack-shots-windows
+          path: va-stack-shots/
+          if-no-files-found: error
   setup:
     strategy:
       fail-fast: false
