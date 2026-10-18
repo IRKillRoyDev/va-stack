@@ -6,7 +6,7 @@ text, red flags and an issue list, the page pane (QtPdf) that boxes the
 exact source spot, Confirm / Next / Back / Save for later, and Confirm all
 with the typed phrase. Runs headless with QT_QPA_PLATFORM=offscreen (set in
 conftest.py) on Linux, macOS and Windows. Saves a PNG of every screen to $VA_STACK_SHOTS
-(default /workspace/va-stack-shots/). Fake data only.
+(default: va-stack-shots in the temp folder). Fake data only.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,9 @@ INPUT = json.loads(
     (ROOT / "tests/fixtures/proposed-issues-input-fake.json").read_text()
 )
 EDIT = "However, the examiner concluded the ringing is from aging, not service."
-SHOTS = Path(os.environ.get("VA_STACK_SHOTS", "/workspace/va-stack-shots"))
+SHOTS = Path(
+    os.environ.get("VA_STACK_SHOTS") or Path(tempfile.gettempdir()) / "va-stack-shots"
+)
 FAKE_FILE = ROOT / "examples" / "records" / "va-clinic-fake.txt"
 
 
@@ -421,7 +424,7 @@ def test_app_start_screen_pick_file_review_confirm(tmp_path, monkeypatch, dialog
     def start(win):
         assert "Create your private vault" in texts(win)
         assert not any("Enter" in t and "Yes" in t for t in texts(win))
-        shot(win, "01-start")
+        shot(win, "21-app-start")
         tick = find(win, QCheckBox, "consent")
         first = find(win, QLineEdit, "passphrase")
         again = find(win, QLineEdit, "again")
@@ -443,25 +446,25 @@ def test_app_start_screen_pick_file_review_confirm(tmp_path, monkeypatch, dialog
         assert db.exists()
         assert "No files yet." in texts(win)
         assert not find(win, QPushButton, app_mod.START_REVIEW).isEnabled()
-        shot(win, "02-files-empty")
+        shot(win, "22-app-files-empty")
         click(win, app_mod.CHOOSE)
         assert asked == [app_mod.CHOOSE] and "pdf" in qt.FILE_FILTER.lower()
         assert any(t.startswith("va-clinic-fake.txt") for t in texts(win))
-        shot(win, "03-files-imported")
+        shot(win, "23-app-files-imported")
         events.append("imported")
         click(win, app_mod.START_REVIEW)
 
     def review(win, vault):
         assert any(t.startswith("1 of ") for t in texts(win))
         assert not any("Enter" in t and "Yes" in t for t in texts(win))
-        shot(win, "04-review-form")
+        shot(win, "24-app-review-form")
         dialogs["answers"].extend([True] * 10)
         while win.fr.form_index is not None:
             confirm_form(win)
         assert review_count(vault) == 0
         prompt = find(win, QLabel, "phrase_prompt").text()
         type_into(find(win, QLineEdit, "phrase"), phrase_of(prompt))
-        shot(win, "05-summary")
+        shot(win, "25-app-summary")
         events.append("confirm")
         click(win, "confirm_all")
 
@@ -477,7 +480,12 @@ def test_app_start_screen_pick_file_review_confirm(tmp_path, monkeypatch, dialog
     finally:
         v.close()
     assert saved >= 1 and listed == [("va-clinic-fake.txt", 3)]
-    for n in ("01-start", "02-files-empty", "03-files-imported", "04-review-form"):
+    for n in (
+        "21-app-start",
+        "22-app-files-empty",
+        "23-app-files-imported",
+        "24-app-review-form",
+    ):
         assert (SHOTS / f"{n}.png").exists()
 
 
