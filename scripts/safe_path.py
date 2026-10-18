@@ -212,8 +212,13 @@ class PinnedRoot:
         return self.path / check_name(name)
 
 
-def pin_root(folder, *, bases=None, create: bool = True) -> PinnedRoot:
-    """Pin folder: resolve once (strict=True), check symlinks, record inode."""
+def pin_root(folder, *, bases=None, create: bool = True, mode=None) -> PinnedRoot:
+    """Pin folder: resolve once (strict=True), check symlinks, record inode.
+
+    mode (for example 0o700) applies when this call creates the folder
+    itself; its parents and an existing folder keep their modes. On Windows
+    the folder's access list applies instead.
+    """
     if isinstance(folder, PinnedRoot):
         folder.recheck()
         return folder
@@ -224,7 +229,14 @@ def pin_root(folder, *, bases=None, create: bool = True) -> PinnedRoot:
     bases = _default_bases() if bases is None else [Path(b) for b in bases]
     _check_symlinks(lex, bases)
     if create:
-        lex.mkdir(parents=True, exist_ok=True)
+        if mode is None:
+            lex.mkdir(parents=True, exist_ok=True)
+        else:
+            lex.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.mkdir(lex, mode)
+            except FileExistsError:
+                pass
     _check_symlinks(lex, bases)  # again: closes a swap during mkdir
     try:
         real = lex.resolve(strict=True)
@@ -339,13 +351,13 @@ def write_new(root, name, data: bytes) -> Path:
     return root.path / name
 
 
-def append_text(root, name, text: str) -> Path:
-    """Append text to name in root (created if missing); never follows links."""
+def append_text(root, name, text: str, *, mode: int = 0o600) -> Path:
+    """Append text to name in root (created with mode if missing); no links."""
     root = pin_root(root, create=False)
     try:
         # O_NONBLOCK: a FIFO planted at the name errors instead of hanging.
         flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NONBLOCK", 0)
-        fd = _open_in(root, name, flags)
+        fd = _open_in(root, name, flags, mode)
     except OSError as exc:
         raise SafePathError(f"could not open the file safely: {exc.strerror}") from exc
     try:

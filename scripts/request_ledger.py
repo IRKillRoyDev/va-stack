@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 LEDGER_NAME = "form requests.jsonl"
+FOLDER_MODE = 0o700  # a new ledger folder: owner only
+FILE_MODE = 0o600  # the ledger file: owner read and write only
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -66,8 +68,9 @@ class Ledger:
             sort_keys=True,
         )
         try:  # pinned folder; O_APPEND | O_NOFOLLOW via dir fd, fsync'd
-            root = safe_path.pin_root(self.path.parent)
-            safe_path.append_text(root, self.path.name, line + "\n")
+            # Owner-only where POSIX modes apply: a new folder 0700, the file 0600.
+            root = safe_path.pin_root(self.path.parent, mode=FOLDER_MODE)
+            safe_path.append_text(root, self.path.name, line + "\n", mode=FILE_MODE)
         except safe_path.SafePathError as exc:
             raise ValueError(f"ledger path is not allowed: {exc}") from exc
 
