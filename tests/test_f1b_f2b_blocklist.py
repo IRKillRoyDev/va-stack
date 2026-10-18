@@ -86,10 +86,12 @@ def test_f1b_make_draft_leaves_both_fields_blank(tmp_path):
     from pypdf import PdfReader
     from reportlab.lib.pagesizes import letter
 
+    # Load the vault module here, not at import time: other test files load
+    # their own copy during collection, and form_fill uses whichever copy is
+    # current when it loads, so both must come from the same load.
+    vault_mod = _load("records_vault")
     ff = _load("form_fill")
-    # form_fill checks the vault class is its own records_vault module (other
-    # test files may load a fresh copy), so open the vault from that module.
-    vault = _open_vault(tmp_path, ff.records_vault)
+    vault = _open_vault(tmp_path, vault_mod)
     try:
         src = tmp_path / "form.pdf"
         c = canvas_mod.Canvas(str(src), pagesize=letter)
