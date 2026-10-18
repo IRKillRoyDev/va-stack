@@ -362,14 +362,21 @@ def test_screenshot_shows_the_form_and_the_panel(fu, case, by_point, name):
     try:
         win.resize(1100, 760)
         assert win.isVisible()
-        path = fu.qt.shoot(win, SHOTS / f"{name}.png")
-        assert path.stat().st_size > 1000
         view = win.findChild(fu.QPdfView, "form_view")
         assert view is not None and view.isVisible()
-        img = view.grab().toImage()
-        # A blank view has ~0 dark pixels; the form's header bar alone gives
-        # several hundred on every OS (thin text alone varies by platform).
-        assert _dark_pixels(img, (0, 0, img.width(), img.height())) > 300
+        # QPdfView renders pages in the background: wait for the page (up to
+        # 10 s) before the pixel check and the screenshot. A blank view has
+        # ~0 dark pixels; the form's header bar alone gives several hundred.
+        dark = 0
+        for _ in range(100):
+            QTest.qWait(100)
+            img = view.grab().toImage()
+            dark = _dark_pixels(img, (0, 0, img.width(), img.height()))
+            if dark > 300:
+                break
+        assert dark > 300
+        path = fu.qt.shoot(win, SHOTS / f"{name}.png")
+        assert path.stat().st_size > 1000
         panel = find(win, QLabel, "data_point")
         assert panel.isVisible() and panel.text()
     finally:
