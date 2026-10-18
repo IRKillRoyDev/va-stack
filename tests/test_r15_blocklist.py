@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -310,8 +311,17 @@ def test_info_log_file_names_search_terms_and_stderr(tmp_path, capfd):
     out, err = capfd.readouterr()
     for text in (log, out, err):
         assert word not in text.lower()
+        # Random session uuids, hex digests and microsecond timestamps can
+        # hold any 4 digits by chance; drop only those before the check.
+        scrubbed = re.sub(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+            r"|\b[0-9a-f]{32,}\b"
+            r"|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?",
+            "",
+            text,
+        )
         for digits in ("6789", "2345", "123-45"):
-            assert digits not in text, digits
+            assert digits not in scrubbed, digits
 
 
 # ---------------- Negatives: must survive both layers ----------------
