@@ -983,13 +983,11 @@ def _review_state(vault, row_id: str, links: list[dict], bot_id: str):
 
 
 def _gui_available() -> bool:
-    """True when tkinter imports and (on Linux) a display is set.
+    """True when PySide6 is installed and (on Linux) a display is set.
 
     When to use: to pick the review window or the text walk-through.
     """
-    try:
-        import tkinter  # noqa: F401
-    except ImportError:
+    if importlib.util.find_spec("PySide6") is None:
         return False
     if sys.platform.startswith("linux"):
         return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
@@ -1012,10 +1010,11 @@ def _sibling(name: str):
 def _review_main(args) -> int:
     """Build the report from the vault and start the review.
 
-    When to use: from main() with --review. Uses the tkinter Unlock and
+    When to use: from main() with --review. Uses the PySide6 Unlock and
     Review windows when available (unless --cli), else the terminal unlock
     and the text walk-through. Returns 0 when the user confirmed all rows,
-    1 if they stopped first, 3 if the vault stayed locked. The report JSON
+    1 if they stopped first (2 if saved for later), 3 if the vault stayed
+    locked. The report JSON
     is not printed in review mode.
     """
     data = _json(args.input)

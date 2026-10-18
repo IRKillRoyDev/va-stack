@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checkout-style review of a report: one row per screen, then a summary.
 
-A pure state machine (no GUI) shared by the tkinter window in vault_ui.py
+A pure state machine (no GUI) shared by the PySide6 window in qt_ui.py
 and the text fallback here. Answers stay in memory until Confirm all;
 only then are they saved to the encrypted vault, with log entries.
 
@@ -455,7 +455,7 @@ class FieldReview:
 def run_cli(report: dict, vault, bot_id: str, input_fn=input, say=print) -> int:
     """Walk the same review in a terminal. Returns 0 when confirmed.
 
-    When to use: when there is no display for the tkinter window.
+    When to use: when there is no display for the PySide6 window.
     Keys: y = Yes, n = No, b = Back, x = Next (Enter alone is not a Yes);
     on the summary, e N = edit row N, c = Confirm all (then type back the
     phrase shown), b = Back.
