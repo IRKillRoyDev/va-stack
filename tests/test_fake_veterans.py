@@ -172,33 +172,36 @@ def track_veteran(n: int, track: str) -> FakeVeteran:
 
 
 EDGE_CASES = {
-    "identifier-in-narrative": lambda ids: dict(
-        records=[("narrative.txt", "txt", narrative_text(ids))]
-    ),
-    "scanned-pdf-no-text": lambda ids: dict(
-        records=[("scan.pdf", "scan", "")], expect_issues=0
-    ),
-    "text-pdf-record": lambda ids: dict(
-        records=[("clinic.pdf", "pdf", record_text(ids))]
-    ),
-    "empty-record": lambda ids: dict(
-        records=[("empty.txt", "txt", "")], expect_issues=0
-    ),
-    "unicode-confusables": lambda ids: dict(
-        records=[("unicode.txt", "txt", unicode_text(ids))],
-        extra_id_strings=(
+    "identifier-in-narrative": lambda ids: {
+        "records": [("narrative.txt", "txt", narrative_text(ids))]
+    },
+    "scanned-pdf-no-text": lambda ids: {
+        "records": [("scan.pdf", "scan", "")],
+        "expect_issues": 0,
+    },
+    "text-pdf-record": lambda ids: {
+        "records": [("clinic.pdf", "pdf", record_text(ids))]
+    },
+    "empty-record": lambda ids: {
+        "records": [("empty.txt", "txt", "")],
+        "expect_issues": 0,
+    },
+    "unicode-confusables": lambda ids: {
+        "records": [("unicode.txt", "txt", unicode_text(ids))],
+        "extra_id_strings": (
             ids["ssn"].translate({c: c + 0xFEE0 for c in range(0x30, 0x3A)}),
         ),
-    ),
-    "negated-diagnosis": lambda ids: dict(
-        records=[("negated.txt", "txt", negated_text(ids))], expect_negative=True
-    ),
-    "several-claims-one-record": lambda ids: dict(
-        records=[
+    },
+    "negated-diagnosis": lambda ids: {
+        "records": [("negated.txt", "txt", negated_text(ids))],
+        "expect_negative": True,
+    },
+    "several-claims-one-record": lambda ids: {
+        "records": [
             ("multi.txt", "txt", record_text(ids, ("tinnitus", "eczema", "back")))
         ],
-        expect_issues=3,
-    ),
+        "expect_issues": 3,
+    },
 }
 
 

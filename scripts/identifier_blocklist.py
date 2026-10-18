@@ -146,6 +146,8 @@ _REDACT_KINDS = {
     "VA_FILE": "VA_FILE_NUMBER",
     "DOD_ID": "SERVICE_NUMBER",
     "MBI": "SSN",  # Medicare number, same harm as an SSN
+    "SERVICE_NUMBER": "SERVICE_NUMBER",
+    "BANK": "BANK",
     "EMAIL": "EMAIL",
 }
 _ZIP = re.compile(

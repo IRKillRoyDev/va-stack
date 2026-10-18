@@ -263,6 +263,27 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     ),
     ("VA_FILE", re.compile(r"\bC\s?\d{7,8}\b")),
     (
+        # Military service numbers: labeled, or two capital letters and 8
+        # digits (RA12345678 style).
+        "SERVICE_NUMBER",
+        re.compile(
+            r"(?P<lbl>\b(?:service|serial|svc)\s*(?:number|num|no\.?|#)[\s:#.-]*)"
+            r"[A-Z]{0,3}[\s-]?\d{6,9}(?!\d)",
+            re.IGNORECASE,
+        ),
+    ),
+    ("SERVICE_NUMBER", re.compile(r"\b[A-Z]{2}\d{8}\b")),
+    (
+        # Labeled bank routing and account numbers (6 to 17 digits).
+        "BANK",
+        re.compile(
+            r"(?P<lbl>\b(?:routing|aba|account|acct)"
+            r"(?:\s*(?:number|num|no\.?|#))?[\s:#.-]*)"
+            r"\d(?:[\s-]?\d){5,16}(?!\d)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "ADDRESS",
         re.compile(
             r"\b\d{1,6}\s+(?:[A-Z][A-Za-z0-9.]*\s+){1,4}"
