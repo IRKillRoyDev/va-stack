@@ -22,9 +22,11 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QCheckBox,
+    QGroupBox,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -335,28 +337,118 @@ def test_review_keyboard_y_esc_right_and_enter_is_not_yes(db, dialogs):
         v.close()
 
 
-def test_page_pane_boxes_the_exact_spot_of_every_field(db):
+def pane_frame(win):
+    """The page pane as it is on screen in a fresh screenshot (QImage)."""
+    path = shot(win, "12-review-page-highlight")
+    img = QImage(str(path))
+    view = win.pane.view
+    top_left = view.viewport().mapTo(win, QPoint(0, 0))
+    return img.copy(
+        top_left.x(), top_left.y(), view.viewport().width(), view.viewport().height()
+    )
+
+
+def ink_and_yellow(img):
+    """Count dark (text) pixels and the bounding box of yellow pixels."""
+    dark, ys, xs = 0, [], []
+    for y in range(img.height()):
+        for x in range(0, img.width(), 2):
+            c = QColor(img.pixel(x, y))
+            if c.red() < 110 and c.green() < 110 and c.blue() < 110:
+                dark += 1
+            elif c.red() > 200 and c.green() > 170 and c.blue() < 120:
+                ys.append(y)
+                xs.append(x)
+    box = (min(xs), min(ys), max(xs), max(ys)) if ys else None
+    return dark, box
+
+
+def test_page_pane_renders_text_and_yellow_box_at_the_spot(db):
+    """The pane must not be blank: page text drawn and the box where it belongs."""
+    v = reopen(db)
+    try:
+        report = pi.build_report(copy.deepcopy(INPUT), v, BOT)
+        win = qt.ReviewWindow(report, v, BOT)
+        win.draw()  # the window is not shown by the test; shoot() must cope
+        field = win.fr.forms[0]["fields"][0]
+        win.select(field["id"])
+        assert win.pane.document.pageCount() > 0
+        img = pane_frame(win)
+        dark, box = ink_and_yellow(img)
+        assert dark > 200, "the page pane is blank (no text drawn)"
+        assert box is not None, "no yellow highlight in the page pane"
+        # Where the box should be: page points -> view pixels (fit to width).
+        view = win.pane.view
+        margin = view.documentMargins().left()
+        scale = (view.viewport().width() - 2 * margin) / qt.PAGE_W
+        x0, y0, x1, y1 = win.pane.rects[0]
+        scroll = view.verticalScrollBar().value()
+        top = view.documentMargins().top() + y0 * scale - scroll
+        bottom = view.documentMargins().top() + y1 * scale - scroll
+        assert abs(box[1] - top) <= 4 + 2 * scale, (box, top)
+        assert box[3] <= bottom + (y1 - y0) * scale * (len(win.pane.rects) - 1) + 6
+        assert abs(box[0] - (margin + x0 * scale)) <= 4 + 2 * scale, (box, x0)
+        win.close()
+    finally:
+        v.close()
+
+
+def test_pane_page_and_line_match_the_selected_field_exactly(db):
+    """Page and line in the pane equal the field's source (1-based), every field."""
     v = reopen(db)
     try:
         report = pi.build_report(copy.deepcopy(INPUT), v, BOT)
         win = qt.ReviewWindow(report, v, BOT)
         win.draw()
         checked = 0
-        for form in win.fr.forms:
-            for field in form["fields"]:
+        while win.fr.form_index is not None:
+            form = win.fr.forms[win.fr.form_index]
+            for k, field in enumerate(form["fields"]):
                 win.select(field["id"])
-                assert win.pane.rects, field["id"]
-                assert win.pane.document.pageCount() == 1
-                assert win.pane.highlighted_text() == norm(field["value"])
-                assert f"Page {field['page']}, line {field['line']}" in (
-                    win.pane.caption.text()
-                )
+                pane = win.pane
+                assert pane.field_id == field["id"]
+                assert pane.page == field["page"], (pane.page, field)
+                assert pane.line == field["line"], (pane.line, field)
+                assert field["link"].endswith(f"#page={field['page']}")
+                assert pane.highlighted_text() == norm(field["value"])
+                where = f"{field['label']} (page {field['page']}, line {field['line']})"
+                assert find(win, QGroupBox, f"field_box-{k}").title() == where
+                assert pane.caption.text().startswith(where), pane.caption.text()
                 checked += 1
+            # A field from another form cannot be shown next to this one.
+            other = [
+                f["id"]
+                for i, fm in enumerate(win.fr.forms)
+                if i != win.fr.form_index
+                for f in fm["fields"]
+            ]
+            if other:
+                with pytest.raises(ValueError):
+                    win.select(other[0])
+            for field in form["fields"]:
+                win.confirm(field["id"])
         assert checked == sum(len(f["links"]) for f in report["cited_report"])
-        shot(win, "12-review-page-highlight")
         win.close()
     finally:
         v.close()
+
+
+def test_quote_spot_lines_are_one_based_and_survive_wrapping():
+    """Line n of the page (1-based) is source line n, even after a wrapped line."""
+    text = "first line\nsecond line\ntinnitus noted today."
+    rects, line = qt.quote_spot(text, "tinnitus noted today.", 3)
+    assert line == 3
+    assert rects[0][1] == qt.MARGIN + 2 * qt.LINE_H  # third drawn row
+    rects, line = qt.quote_spot(text, "first line", 1)
+    assert line == 1 and rects[0][1] == qt.MARGIN
+    wrapped = ("word " * 20).strip() + "\nsecond line\ntinnitus noted today."
+    rects, line = qt.quote_spot(wrapped, "tinnitus noted today.", 3)
+    assert line == 3
+    assert rects[0][1] == qt.MARGIN + 3 * qt.LINE_H  # line 1 took two rows
+    assert qt.page_of_link("vault://0123abcd#page=1") == 1
+    assert qt.page_of_link("vault://0123abcd#page=12") == 12
+    with pytest.raises(ValueError):
+        qt.page_of_link("vault://0123abcd")
 
 
 def test_render_page_wraps_and_finds_quote_across_rows():
