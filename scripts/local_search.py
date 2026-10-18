@@ -215,6 +215,49 @@ _FILLER = (
     r"|(?:ending|ends)(?:\s+(?:in|with))?\b|#)){0,4}"
 )
 
+# One shared vocabulary of identifier labels, reused by the labeled redaction
+# rules below and imported by identifier_blocklist so a code-shaped value (a
+# CPT/DC/NDC list or a $ amount) is never excused when one of these labels
+# sits just before it. Bare "claim" is ordinary VA prose, so only "claim
+# number"/"claim no" counts, never "claim" alone.
+_LBL_SSN = (
+    r"S\.?S\.?N\.?|SSAN|social(?:\s+security)?(?:\s+(?:number|no\.?|#))?"
+    r"|soc\.?\s*sec\.?(?:urity)?|T\.?I\.?N\.?|I\.?T\.?I\.?N\.?|E\.?I\.?N\.?"
+    r"|taxpayer(?:\s+id(?:entification)?)?(?:\s+(?:number|no\.?))?"
+)
+_LBL_BANK = (
+    r"routing|aba|rtn|account|acct|bank|iban|swift"
+    r"|credit\s+card|debit(?:\s+card)?|card(?:\s+(?:number|no\.?|#))?"
+)
+_LBL_VAFILE = r"VA\s+file(?:\s+(?:number|no\.?))?|C-?file|claim\s+(?:number|no\.?)"
+_LBL_SERVICE = r"service\s*(?:number|num|no\.?|#)|serial|svc|DoD\s+ID|EDIPI"
+# Medical and membership identifiers. The shared guard uses them (a
+# code-shaped value right after one is never excused), and the "ID" rule
+# below redacts their numbers on the page pane.
+_LBL_MED = (
+    r"MRN|medical\s+record\s*(?:number|no\.?|#)?|patient\s+id"
+    r"|member\s+id|policy\s*(?:number|no\.?|#)|DOB|date\s+of\s+birth"
+)
+# One shared identifier-label pattern. identifier_blocklist imports this exact
+# object, and a test checks the two modules stay in sync.
+IDENT_LABEL = re.compile(
+    rf"(?<![A-Za-z])(?:{_LBL_SSN}|{_LBL_BANK}|{_LBL_VAFILE}|{_LBL_SERVICE}"
+    rf"|{_LBL_MED})",
+    re.IGNORECASE,
+)
+# Code words that may sit between an identifier label and its number, so
+# "account CPT 0001 2345 6789" is still redacted as a bank number.
+_CODE_FILLER = r"(?:(?:CPT|HCPCS|DCs?|NDC|codes?)\b[\s:#.=-]*)?\$?\s*"
+# Any IDENT_LABEL label followed by a number: the page-pane rule for labels
+# with no rule of their own (MRN, patient id, member id, policy number, ITIN,
+# EIN, card, IBAN, DoD ID ...) and for shapes the specific rules miss ("SSN
+# 0001 2345 6789", "account A1234567"). It runs after the specific rules, so
+# their kinds win; 4 or more digits, joined by the shared gap rule.
+_ANY_IDENT_LABEL = (
+    rf"(?<![A-Za-z])(?:{_LBL_SSN}|{_LBL_BANK}|{_LBL_VAFILE}|{_LBL_SERVICE}"
+    rf"|{_LBL_MED})(?![A-Za-z])"
+)
+
 # Order matters: labeled identifiers first, then generic number shapes.
 REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
@@ -250,8 +293,18 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
         "VA_FILE",
         re.compile(
-            r"(?P<lbl>\b(?:VA file(?: number| no\.?)?|C-?file|claim number)"
-            r"[\s:#No.-]*)C?\s?\d{7,9}\b",
+            rf"(?P<lbl>\b(?:{_LBL_VAFILE})[\s:#No.-]*{_CODE_FILLER})"
+            rf"C?\s?\d(?:{_GROUP_SEP}\d){{6,15}}(?!\d)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # Labeled SSN: any 9 digits under the shared gap rule after an SSN
+        # label, with an optional "$" ("SSN $123,456,789", "ssn\n$123,456,789").
+        "SSN",
+        re.compile(
+            rf"(?P<lbl>(?<![A-Za-z])(?:{_LBL_SSN})[\s:#]*\$?\s*)"
+            rf"\d(?:{_GROUP_SEP}\d){{8}}(?!\d)",
             re.IGNORECASE,
         ),
     ),
@@ -285,8 +338,8 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         "SERVICE_NUMBER",
         re.compile(
             rf"(?P<lbl>\b(?:service|serial|svc)\s*(?:number|num|no\.?|#){_FILLER}"
-            r"[\s:#.=-]*)"
-            rf"[A-Z]{{0,3}}{_GROUP_SEP}\d(?:{_GROUP_SEP}\d){{5,8}}(?!\d)",
+            rf"[\s:#.=-]*{_CODE_FILLER})"
+            rf"[A-Z]{{0,3}}{_GROUP_SEP}\d(?:{_GROUP_SEP}\d){{5,15}}(?!\d)",
             re.IGNORECASE,
         ),
     ),
@@ -295,8 +348,16 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         # Labeled bank routing and account numbers (6 to 17 digits).
         "BANK",
         re.compile(
-            rf"(?P<lbl>\b(?:routing|aba|account|acct){_FILLER}[\s:#.=-]*)"
+            rf"(?P<lbl>\b(?:{_LBL_BANK}){_FILLER}[\s:#.=-]*{_CODE_FILLER})"
             rf"\d(?:{_GROUP_SEP}\d){{5,16}}(?!\d)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "ID",
+        re.compile(
+            rf"(?P<lbl>{_ANY_IDENT_LABEL}{_FILLER}[\s:#.=-]*{_CODE_FILLER})"
+            rf"[A-Z]{{0,3}}{_GROUP_SEP}\d(?:{_GROUP_SEP}\d){{3,19}}(?!\d)",
             re.IGNORECASE,
         ),
     ),
@@ -309,10 +370,15 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
             r"|Parkway|Pkwy)\b\.?"
             r"(?:,?\s+(?:Apt|Suite|Unit|#)\s*\w+)?"
             r"|\bP\.?\s?O\.?\s*Box\s*\d+"
-            # "RR 2 Box 15", "R.R. 2 Box 5", "RR #2 Box 5"; a bare "RR 16" is a
-            # respiratory rate
-            r"|\bRural\s+Route\s*(?:#\s*)?\d+(?:\s+Box\s*#?\s*\d+)?"
-            r"|\bR\.?\s?R\.?\s*(?:#\s*)?\d+\s+Box\s*#?\s*\d+",
+            # Rural and military route addresses: a route prefix (RR, R.R.,
+            # Rt, Rte, Route, Rural Route/Rte, HC, HCR, PSC), an optional route
+            # number, an optional comma, then a Box number. "Rural Route 4"
+            # with no Box still counts. A bare "RR 16" (respiratory rate) and
+            # "HR 72" have no Box, so they are left alone.
+            r"|\bRural\s+R(?:oute|te)\.?\s*(?:#\s*)?\d+"
+            r"(?:\s*,?\s*Box\s*(?:#\s*)?\d+)?"
+            r"|\b(?:R\.?\s?R\.?|R(?:oute|te|t)?\.?|HCR?|PSC)"
+            r"\s*(?:#\s*)?\d*\s*,?\s*Box\s*(?:#\s*)?\d+",
             re.IGNORECASE,
         ),
     ),

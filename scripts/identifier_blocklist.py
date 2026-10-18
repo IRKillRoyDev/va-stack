@@ -97,7 +97,17 @@ _INVISIBLE = dict.fromkeys(
 _TOKEN = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 
 
+# Combining marks (Mn) and format characters (Cf) are stripped before NFKC so a
+# label cannot be hidden with a decomposed accent or a zero-width character
+# ("accou\u0301nt" -> "account"). Precomposed look-alike letters and cross-script
+# homoglyphs (Cyrillic "a") are a confusables problem left open (see the report).
+_STRIP_CATEGORIES = {"Mn", "Cf"}
+
+
 def _clean(text: str) -> str:
+    text = "".join(
+        ch for ch in text if unicodedata.category(ch) not in _STRIP_CATEGORIES
+    )
     return unicodedata.normalize("NFKC", text).translate(_INVISIBLE)
 
 
@@ -191,7 +201,7 @@ _PERCENT = re.compile(r"100|[1-9]?\d")
 _PERCENT_AFTER = re.compile(r"\s?(?:%|percent\b)", re.IGNORECASE)
 # 38 CFR Part 4 diagnostic codes are four digits, 5000-9999; at most 3.
 _DC_LIST = re.compile(r"[5-9]\d{3}(?:[/,]\s?[5-9]\d{3}){0,2}")
-_DC_LABEL = re.compile(r"\b(?:DCs?|diagnostic\s+codes?)\b[\s:#]*$", re.IGNORECASE)
+_DC_LABEL = re.compile(r"\b(?:DCs?|diagnostic\s+codes?)\b[ \t:#]*$", re.IGNORECASE)
 _AMOUNT = re.compile(r"[1-9]\d{0,2}(?:,\d{3})+(?:\.\d{2})?")
 _DOLLAR = re.compile(r"\$\s*$")
 _AMOUNT_MAX_DIGITS = 10  # whole-dollar digits; "$1,234,567,890" at most
@@ -206,7 +216,7 @@ _YEAR = re.compile(r"(?:19|20)\d\d")
 _CPT_CODE = r"(?:00[1-9]\d\d|0[1-9]\d{3}|[1-8]\d{4}|9[0-8]\d{3}|99[0-4]\d\d)"
 _CPT_LIST = re.compile(rf"{_CPT_CODE}(?:(?:\s*[,/]\s*|\s+){_CPT_CODE}){{0,2}}")
 _CPT_LABEL = re.compile(
-    r"\b(?:CPT|HCPCS|(?:procedure|visit|billing)\s+codes?)(?:\s+codes?)?[\s:#]*$",
+    r"\b(?:CPT|HCPCS|(?:procedure|visit|billing)\s+codes?)(?:\s+codes?)?[ \t:#]*$",
     re.IGNORECASE,
 )
 # National Drug Codes in their dashed 10-digit shapes (4-4-2, 5-3-2, 5-4-1)
@@ -216,7 +226,7 @@ _NDC = re.compile(
     r"(?!0+-)(?:\d{4}-(?!0+-)\d{4}|\d{5}-(?!0+-)\d{3}|\d{5}-(?!0+-)\d{4})"
     r"-(?!0+$)\d{1,2}"
 )
-_NDC_LABEL = re.compile(r"\bNDC(?:\s*(?:#|no\.?|number|code))?[\s:#]*$", re.IGNORECASE)
+_NDC_LABEL = re.compile(r"\bNDC(?:\s*(?:#|no\.?|number|code))?[ \t:#]*$", re.IGNORECASE)
 _LABELED_CODES = frozenset({"cpt", "ndc"})
 # Labels are looked for only this far before a piece, so a long input is not
 # rescanned from its start for every piece (that made "DC 5257/6260/7000 "
@@ -230,8 +240,26 @@ def _label_before(pattern: re.Pattern[str], text: str, start: int) -> bool:
     return pattern.search(text, max(0, start - _LABEL_WINDOW), start) is not None
 
 
+# Identifier labels (SSN, bank, VA file, service number) share one definition
+# with local_search. A code-shaped piece ($ amount, CPT/DC/NDC list) is never
+# excused when one of these labels sits within the lookback before it, so
+# "account CPT 0001 2345 6789" and "SSN $123,456,789" are blocked, not excused.
+_IDENT_LABEL = local_search.IDENT_LABEL
+
+
+def _ident_label_before(text: str, start: int) -> bool:
+    """True when an identifier label sits within the lookback before start."""
+    return _IDENT_LABEL.search(text, max(0, start - _LABEL_WINDOW), start) is not None
+
+
 _REPEATABLE = frozenset({"date", "year"})  # "seen 03/14/2027, 04/15/2027"
 _MAX_PIECES = 4
+# Even when every piece of a value is an excused code, a long enough total
+# run of such digits is treated as an identifier (an account can be dressed
+# as a chain of code pieces). 16 digits clears the longest real single
+# piece (three CPT codes = 15) but blocks chains like a dashed NDC plus a
+# CPT list (21) or a DC list plus a rating list (18).
+_MAX_EXCUSED_DIGITS = 16
 _NOT_AN_ID = re.compile(
     r"\d{4}-\d{1,2}-\d{1,2}"  # recent ISO date (old ones are caught as DOB)
     r"|\d{1,2}[.-]\d{1,2}[.-]\d{2,4}"
@@ -239,34 +267,86 @@ _NOT_AN_ID = re.compile(
 )
 
 
+def _m_rating(text: str, start: int, end: int, piece: str) -> bool:
+    near = text[slice(max(0, start - _RATING_WINDOW), end + _RATING_WINDOW)]
+    return bool(_RATING_LIST.fullmatch(piece)) and bool(_RATING_WORD.search(near))
+
+
+def _m_percent(text: str, start: int, end: int, piece: str) -> bool:
+    return bool(_PERCENT.fullmatch(piece)) and bool(_PERCENT_AFTER.match(text, end))
+
+
+def _m_dc(text: str, start: int, end: int, piece: str) -> bool:
+    return bool(_DC_LIST.fullmatch(piece)) and _label_before(_DC_LABEL, text, start)
+
+
+def _m_cpt(text: str, start: int, end: int, piece: str) -> bool:
+    return bool(_CPT_LIST.fullmatch(piece)) and _label_before(_CPT_LABEL, text, start)
+
+
+def _m_ndc(text: str, start: int, end: int, piece: str) -> bool:
+    return bool(_NDC.fullmatch(piece)) and _label_before(_NDC_LABEL, text, start)
+
+
+def _m_amount(text: str, start: int, end: int, piece: str) -> bool:
+    return (
+        bool(_AMOUNT.fullmatch(piece))
+        and _label_before(_DOLLAR, text, start)
+        and len(re.sub(r"\D", "", piece.split(".")[0])) <= _AMOUNT_MAX_DIGITS
+    )
+
+
+def _m_date(text: str, start: int, end: int, piece: str) -> bool:
+    return bool(_DATE.fullmatch(piece))
+
+
+def _m_year(text: str, start: int, end: int, piece: str) -> bool:
+    return bool(_YEAR.fullmatch(piece))
+
+
+# The one exception registry. Every shape a digit run may be excused as is a
+# (kind, matcher) row here; the matcher tests the shape plus the kind's own
+# positive context (its code label or rating word). _piece_kind is the ONLY
+# excuse path and routes every row through _guard_ok(), so no shape can return
+# "excused" on its own. Adding a kind means adding a row -- the structural
+# test enumerates these names and fails if a kind is not guarded.
+_EXCEPTION_KINDS: tuple[tuple[str, object], ...] = (
+    ("rating", _m_rating),
+    ("rating", _m_percent),
+    ("dc", _m_dc),
+    ("cpt", _m_cpt),
+    ("ndc", _m_ndc),
+    ("amount", _m_amount),
+    ("date", _m_date),
+    ("year", _m_year),
+)
+_EXCEPTION_KIND_NAMES = frozenset(name for name, _ in _EXCEPTION_KINDS)
+
+
+def _guard_ok(text: str, start: int) -> bool:
+    """The one shared exception guard.
+
+    (a) No identifier label within the lookback, found with the shared
+    identifier-label definition over the shared gap rule. (b) the total-digit
+    cap across a chain of excused pieces and (c) the shared gap rule are
+    enforced by blocked_value and the run matchers, which weigh every piece
+    this guard allows. No exception kind returns "excused" without passing
+    here first.
+    """
+    return not _ident_label_before(text, start)
+
+
 def _piece_kind(text: str, start: int, end: int) -> str | None:
     """Name the non-identifier text[start:end] is, or None.
 
-    When to use: inside _explained(), on one piece of a wide digit run.
-    Labels and words are looked up in the original text around the piece.
+    When to use: inside _explained() and the narrow-run check, on one piece of
+    a digit run. A shape is excused only when its matcher fires AND the shared
+    guard allows it; nothing bypasses the guard.
     """
     piece = text[start:end]
-    near = text[slice(max(0, start - _RATING_WINDOW), end + _RATING_WINDOW)]
-    if _RATING_LIST.fullmatch(piece) and _RATING_WORD.search(near):
-        return "rating"  # "rated 10/20/30/40/50"
-    if _PERCENT.fullmatch(piece) and _PERCENT_AFTER.match(text, end):
-        return "rating"  # "70%"
-    if _DC_LIST.fullmatch(piece) and _label_before(_DC_LABEL, text, start):
-        return "dc"  # "DC 5260/5003/5010"
-    if _CPT_LIST.fullmatch(piece) and _label_before(_CPT_LABEL, text, start):
-        return "cpt"  # "CPT 99213, 93000"
-    if _NDC.fullmatch(piece) and _label_before(_NDC_LABEL, text, start):
-        return "ndc"  # "NDC 0071-0155-23"
-    if (
-        _AMOUNT.fullmatch(piece)
-        and _label_before(_DOLLAR, text, start)
-        and len(re.sub(r"\D", "", piece.split(".")[0])) <= _AMOUNT_MAX_DIGITS
-    ):
-        return "amount"  # "$125,000,000", "$12,345,678.00"
-    if _DATE.fullmatch(piece):
-        return "date"
-    if _YEAR.fullmatch(piece):
-        return "year"  # "in 2015, 2016, 2017"
+    for kind, matcher in _EXCEPTION_KINDS:
+        if matcher(text, start, end, piece) and _guard_ok(text, start):
+            return kind
     return None
 
 
@@ -316,17 +396,34 @@ def blocked_value(value: str) -> str | None:
             return category
     if _ZIP.search(text):
         return "ADDRESS"
-    runs = [
-        m
-        for m in _DIGIT_RUN.finditer(text)
-        if not _NOT_AN_ID.fullmatch(m[0])
-        and _piece_kind(text, m.start(), m.end()) not in _LABELED_CODES
-    ]
-    runs += [m for m in _WIDE_DIGIT_RUN.finditer(text) if not _explained(text, m)]
-    if not runs:
-        return None
-    before = text[: runs[0].start()]
-    return "SERVICE_NUMBER" if re.search(r"[A-Za-z]\s?$", before) else "BANK"
+    runs: list[re.Match[str]] = []
+    excused = 0
+
+    def _digits(piece: str) -> int:
+        return sum(ch.isdigit() for ch in piece)
+
+    covered = bytearray(len(text))  # positions inside a wider run (linear check)
+    for m in _WIDE_DIGIT_RUN.finditer(text):
+        covered[slice(m.start(), m.end())] = b"\x01" * (m.end() - m.start())
+        if _explained(text, m):
+            excused += _digits(m[0])
+        else:
+            runs.append(m)
+    for m in _DIGIT_RUN.finditer(text):
+        if covered[m.start()]:
+            continue  # already weighed as part of the wider run
+        if _NOT_AN_ID.fullmatch(m[0]):
+            continue
+        if _piece_kind(text, m.start(), m.end()) in _LABELED_CODES:
+            excused += _digits(m[0])
+            continue
+        runs.append(m)
+    if runs:
+        before = text[: min(r.start() for r in runs)]
+        return "SERVICE_NUMBER" if re.search(r"[A-Za-z]\s?$", before) else "BANK"
+    if excused > _MAX_EXCUSED_DIGITS:
+        return "BANK"  # a chain of excused codes long enough to hide an account
+    return None
 
 
 def check(name: str, value: str) -> None:
