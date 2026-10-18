@@ -293,7 +293,7 @@ def test_schema_form_id_and_name_fit_every_catalog_form(fm):
         assert re.fullmatch(form["id"]["pattern"].strip("^$"), form_id)
         assert re.fullmatch(form["name"]["pattern"].strip("^$"), entry["title"])
         assert len(entry["title"]) <= form["name"]["maxLength"]
-    assert "(VA )?" in form["id"]["pattern"]  # forms outside the catalog (Step A)
+    assert "(?:VA )?" in form["id"]["pattern"]  # forms outside the catalog (Step A)
 
 
 @pytest.mark.parametrize(

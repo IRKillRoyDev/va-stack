@@ -147,7 +147,7 @@ def test_the_id_is_matched_and_sent_after_clean(fm, tmp_path, raw, clean):
         "",
         "VA",
         "VA ",
-        "21-078",
+        "21-07",
         "21-078123",
         "21-0781ABCD",
         "2-0781",
