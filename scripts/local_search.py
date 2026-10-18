@@ -12,12 +12,11 @@ only the snippets the user needs and let the user approve them first.
 from __future__ import annotations
 
 import argparse
-import datetime
+import importlib.util
 import io
 import json
 import re
 import sys
-import unicodedata
 from pathlib import Path
 
 TEXT_SUFFIXES = {".txt", ".md"}
@@ -28,560 +27,46 @@ DEFAULT_MAX_HITS_PER_TERM = 20
 DEFAULT_MAX_TOTAL = 100
 DEFAULT_CONTEXT = 80
 
-MONTHS = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
-ORD = r"(?:st|nd|rd|th)?"
-# Every full-date shape the redactor understands; used by both passes.
-DATE_VALUE = (
-    r"(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}"
-    r"|\d{4}[/.-]\d{1,2}[/.-]\d{1,2}"
-    r"|(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
-    rf"|{MONTHS}\s?\d{{1,2}}{ORD},?\s\d{{2,4}}"
-    rf"|\d{{1,2}}{ORD}[\s-]{MONTHS}[\s,-]*\d{{2,4}})(?!\d)"
+# Every identifier rule (labels, normalization, gap rule, label position,
+# shapes, exceptions, names, dates) lives in identifier_detect, shared with
+# identifier_blocklist. This module only decides how a finding is shown.
+_DETECT_SPEC = importlib.util.spec_from_file_location(
+    "identifier_detect", Path(__file__).resolve().parent / "identifier_detect.py"
 )
-STATES = (
-    "AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS"
-    "|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV"
-    "|WI|WY|PR|GU|VI|AS|MP|AA|AE|AP"
-)
+identifier_detect = sys.modules.get("identifier_detect")
+if identifier_detect is None:
+    identifier_detect = importlib.util.module_from_spec(_DETECT_SPEC)
+    sys.modules["identifier_detect"] = identifier_detect
+    _DETECT_SPEC.loader.exec_module(identifier_detect)
 
-# MBI character classes (see the MBI entry below).
-_MBI_A = r"[AC-HJKMNP-RT-Y]"
-_MBI_AN = r"[AC-HJKMNP-RT-Y0-9]"
-_MBI_SEP = r"(?:[-\u2010-\u2015\u2212._/]| {1,2})?"
-
-# ---- labeled names -------------------------------------------------------
-# A label (any case, ALL CAPS included) such as Name, Patient, Pt, Veteran,
-# Claimant, Spouse, Dependent, Beneficiary, Examiner, Provider, Signed (by),
-# "Patient's name", "Name of veteran", "Last name", or a title (Mr, Mrs, Ms,
-# Mx, Dr), then a separator (":", "-", en/em dash, fullwidth colon, "=",
-# ".", "|", a line break, "is", or plain whitespace), then the name. Letters
-# are Unicode letters (Ñoño, Zoë, Élodie). A name is up to five words:
-# capitalized or ALL CAPS words (Mc/Mac/O'/hyphenated included), initials
-# ("Q" or "Q."), particles (de, la, van, von, del, da, st, ...), suffixes
-# (Jr., Sr., II, III), or "Last, First". After plain whitespace or a title
-# without a period the name must be capitalized. A negation or common word
-# ("not", "denies", "it") is never swallowed as a name; a capitalized word
-# after it ("Not Fakename") is still redacted.
-_NAME_ROLES = r"patient|veteran|claimant|spouse|dependent|beneficiary|examiner|provider"
-_NAME_LABEL = re.compile(
-    r"(?<![^\W_])(?:"
-    rf"(?:{_NAME_ROLES})(?:['\u2019]s)?[ \t]+name"
-    rf"|name[ \t]+of[ \t]+(?:the[ \t]+)?(?:{_NAME_ROLES})"
-    r"|(?:last|first|middle|full|given|family)[ \t]+name"
-    rf"|name|pt|{_NAME_ROLES}|signed(?:[ \t]+by)?"
-    r")(?![^\W_])"
-    r"(?P<sep>[ \t]*(?:[:\-\u2013\u2014\uff1a=.|][ \t]*(?:\n[ \t]*)?|\n[ \t]*)"
-    r"|[ \t]+is[ \t]+|[ \t]+)",
-    re.IGNORECASE,
-)
-_NAME_TITLE_LABEL = re.compile(
-    r"(?<![^\W_])(?:Mr|Mrs|Ms|Mx|Dr|MR|MRS|MS|MX|DR)(?P<sep>\.[ \t]*|[ \t]+)"
-)
-_NAME_WORD = re.compile(r"[^\W\d_](?:[^\W\d_]|['\u2019-](?=[^\W\d_]))*\.?")
-_NAME_PARTICLES = frozenset(
-    "de la le du des di da del della dos das van von der den ter st st. y bin"
-    " ibn al el".split()
-)
-_NAME_SUFFIXES = frozenset("jr jr. sr sr. ii iii iv".split())
-_NAME_STOPWORDS = frozenset(
-    """not no never none neither nor nothing denies denied deny without unlikely
-    negative cannot can't isn't doesn't don't won't wasn't is was are were be
-    been has had have the a an and or of to in on at as by for with from may
-    might can could would should will reports reported report states stated
-    notes noted says said found finds agrees agree disagrees seen reviewed
-    ssn dob mbi n/a na unknown it he she they this that these those there we
-    i you his her their less more likely confirms confirm refused declined
-    present absent normal see per first last middle name date age sex male
-    female phone address email file number id dod va dc""".split()
-)
+# Compatibility names: the same objects, not copies.
+IDENT_LABEL = identifier_detect.IDENT_LABEL
+GAP = identifier_detect.GAP
+TAG = identifier_detect.TAG
 
 
-def _name_like(word: str, strict: bool, lower_ok: bool) -> bool:
-    """True when word can be part of a name in this position."""
-    core = word.rstrip(".")
-    if not core:
-        return False
-    if len(core) == 1:
-        return core.isupper()  # an initial
-    if core[0].isupper():
-        return True
-    return lower_ok and not strict
-
-
-class _NameRule:
-    """Labeled-name redaction (regex-like: has sub() and subn())."""
-
-    def subn(self, _repl, text: str) -> tuple[str, int]:
-        spans: list[tuple[int, int]] = []
-        pos = 0
-        while True:
-            m = _NAME_LABEL.search(text, pos)
-            t = _NAME_TITLE_LABEL.search(text, pos)
-            if t and (m is None or t.start() < m.start()):
-                m, strict = t, "." not in t.group("sep")
-            elif m is None:
-                break
-            else:
-                sep = m.group("sep")
-                strict = not sep.strip(" \t") or sep.strip() == "is"
-            found = self._take(text, m.end(), strict)
-            spans.extend(found)
-            pos = found[-1][1] if found else m.end()
-        if not spans:
-            return text, 0
-        out, last = [], 0
-        for start, end in spans:
-            out.append(text[slice(last, start)])
-            out.append("[REDACTED-NAME]" + "\n" * text.count("\n", start, end))
-            last = end
-        out.append(text[last:])
-        return "".join(out), len(spans)
-
-    def sub(self, repl, text: str) -> str:
-        return self.subn(repl, text)[0]
-
-    @staticmethod
-    def _take(text: str, pos: int, strict: bool) -> list[tuple[int, int]]:
-        spans: list[tuple[int, int]] = []
-        start = end = None
-        words = 0
-        lower_name = None
-        pending: list[tuple[int, int]] = []
-        i = pos
-        while words < 5:
-            gap = re.match(r",?[ \t]+" if words else "", text[i:])
-            j = i + (gap.end() if gap else 0)
-            w = _NAME_WORD.match(text, j)
-            if not w:
-                break
-            word = w.group(0)
-            low = word.lower()
-            if words == 0 and lower_name is None:
-                lower_name = word[0].islower()
-            if low in _NAME_STOPWORDS or "n't" in low:
-                if start is not None:
-                    spans.append((start, end))
-                    start = None
-                gap_ch = text[slice(w.end(), w.end() + 1)]
-                nxt = None
-                if gap_ch in (" ", "\t"):
-                    nxt = _NAME_WORD.match(text, w.end() + 1)
-                if (
-                    spans
-                    and nxt
-                    and nxt.group(0)[0].isupper()
-                    and nxt.group(0).lower() not in _NAME_STOPWORDS
-                ):
-                    i = w.end()
-                    continue
-                break
-            if low in _NAME_PARTICLES and words:
-                pending.append((j, w.end()))
-                i = w.end()
-                continue
-            if low in _NAME_SUFFIXES and words:
-                end, i = w.end(), w.end()
-                continue
-            if not _name_like(word, strict, bool(lower_name)):
-                break
-            if word.endswith(".") and len(word.rstrip(".")) > 1:
-                w_end = w.end() - 1  # keep a sentence-ending period
-            else:
-                w_end = w.end()
-            if start is None:
-                start = j
-            pending = []
-            end, i = w_end, w_end
-            words += 1
-        if start is not None:
-            spans.append((start, end))
-        return spans
-
-
-_NAME_RULE = _NameRule()
-
-# Labeled service and bank numbers: digit groups may be split by one gap each,
-# the same gap rule as identifier_blocklist: any amount of whitespace (line
-# breaks included) with up to 8 other non-alphanumeric characters among it
-# ("000, 123, 456, 789", "0001    2345    6789", "0001 -- / 2345 -- / 6789",
-# "0001 \n 2345", "1234|5678"; not letters), and a few filler words may sit
-# between the label and the number ("account number is ...", "account ending
-# in ..."). Each punctuation mark is followed by its own whitespace, so the
-# gap matches in one way only and stays linear.
-GAP = r"\s*(?:[^\dA-Za-z\s]\s*){0,8}"
-_GROUP_SEP = GAP
-_FILLER = (
-    r"(?:[\s:#.=-]*(?:(?:number|num|nbr|no|is|was)\b\.?"
-    r"|(?:ending|ends)(?:\s+(?:in|with))?\b|#)){0,4}"
-)
-
-# One shared vocabulary of identifier labels, reused by the labeled redaction
-# rules below and imported by identifier_blocklist so a code-shaped value (a
-# CPT/DC/NDC list or a $ amount) is never excused when one of these labels
-# sits just before it. Bare "claim" is ordinary VA prose, so only "claim
-# number"/"claim no" counts, never "claim" alone.
-_LBL_SSN = (
-    r"S\.?S\.?N\.?|SSAN|social(?:\s+security)?(?:\s+(?:number|no\.?|#))?"
-    r"|soc\.?\s*sec\.?(?:urity)?|T\.?I\.?N\.?|I\.?T\.?I\.?N\.?|E\.?I\.?N\.?"
-    r"|taxpayer(?:\s+id(?:entification)?)?(?:\s+(?:number|no\.?))?"
-)
-_LBL_BANK = (
-    r"routing|aba|rtn|account|acct|bank|iban|swift"
-    r"|credit\s+card|debit(?:\s+card)?|card(?:\s+(?:number|no\.?|#))?"
-)
-_LBL_VAFILE = r"VA\s+file(?:\s+(?:number|no\.?))?|C-?file|claim\s+(?:number|no\.?)"
-_LBL_SERVICE = r"service\s*(?:number|num|no\.?|#)|serial|svc|DoD\s+ID|EDIPI"
-# Medical and membership identifiers. The shared guard uses them (a
-# code-shaped value right after one is never excused), and the "ID" rule
-# below redacts their numbers on the page pane.
-_LBL_MED = (
-    r"MRN|medical\s+record\s*(?:number|no\.?|#)?|patient\s+id"
-    r"|member\s+id|policy\s*(?:number|no\.?|#)|DOB|date\s+of\s+birth"
-)
-# One shared identifier-label pattern. identifier_blocklist imports this exact
-# object, and a test checks the two modules stay in sync.
-IDENT_LABEL = re.compile(
-    rf"(?<![A-Za-z])(?:{_LBL_SSN}|{_LBL_BANK}|{_LBL_VAFILE}|{_LBL_SERVICE}"
-    rf"|{_LBL_MED})",
-    re.IGNORECASE,
-)
-# Code words that may sit between an identifier label and its number, so
-# "account CPT 0001 2345 6789" is still redacted as a bank number.
-_CODE_FILLER = r"(?:(?:CPT|HCPCS|DCs?|NDC|codes?)\b[\s:#.=-]*)?\$?\s*"
-# Any IDENT_LABEL label followed by a number: the page-pane rule for labels
-# with no rule of their own (MRN, patient id, member id, policy number, ITIN,
-# EIN, card, IBAN, DoD ID ...) and for shapes the specific rules miss ("SSN
-# 0001 2345 6789", "account A1234567"). It runs after the specific rules, so
-# their kinds win; 4 or more digits, joined by the shared gap rule.
-_ANY_IDENT_LABEL = (
-    rf"(?<![A-Za-z])(?:{_LBL_SSN}|{_LBL_BANK}|{_LBL_VAFILE}|{_LBL_SERVICE}"
-    rf"|{_LBL_MED})(?![A-Za-z])"
-)
-
-# Order matters: labeled identifiers first, then generic number shapes.
-REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
-    (
-        "EMAIL",
-        # Start only where a run of address characters starts, so a long run
-        # with no "@" is scanned once, not once per word boundary inside it.
-        re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"),
-    ),
-    (
-        # Medicare Beneficiary Identifier: 11 characters, positions
-        # C A AN N A AN N A A N N; letters exclude S, L, O, I, B, Z; the card
-        # prints dashes as 1EG4-TE5-MK73 (CMS, "Understanding the Medicare
-        # Beneficiary Identifier (MBI) Format",
-        # https://www.cms.gov/medicare/new-medicare-card/understanding-the-mbi.pdf,
-        # checked 2026-10-16). CMS converts lowercase, so case is ignored.
-        # Separators: dash (any Unicode dash), dot, underscore, slash, or one or
-        # two spaces.
-        "MBI",
-        re.compile(
-            rf"\b[1-9]{_MBI_A}{_MBI_AN}\d{_MBI_SEP}{_MBI_A}{_MBI_AN}\d{_MBI_SEP}"
-            rf"{_MBI_A}{{2}}\d{{2}}\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "DOD_ID",
-        re.compile(
-            r"(?P<lbl>\b(?:DoD ID|EDIPI|DOD ID number)\b[\s:#No.-]*)\d{10}\b"
-            r"|\b\d{10}\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "VA_FILE",
-        re.compile(
-            rf"(?P<lbl>\b(?:{_LBL_VAFILE})[\s:#No.-]*{_CODE_FILLER})"
-            rf"C?\s?\d(?:{_GROUP_SEP}\d){{6,15}}(?!\d)",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        # Labeled SSN: any 9 digits under the shared gap rule after an SSN
-        # label, with an optional "$" ("SSN $123,456,789", "ssn\n$123,456,789").
-        "SSN",
-        re.compile(
-            rf"(?P<lbl>(?<![A-Za-z])(?:{_LBL_SSN})[\s:#]*\$?\s*)"
-            rf"\d(?:{_GROUP_SEP}\d){{8}}(?!\d)",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "SSN",
-        re.compile(
-            r"(?<!\d)\d{3}[\s./_,:-]{1,4}\d{2}[\s./_,:-]{1,4}\d{4}(?!\d)"
-            r"|(?<!\d)\d{9}(?!\d)"
-        ),
-    ),
-    (
-        # Labeled phones, or full 10-digit forms. Unlabeled 7-digit numbers
-        # and unlabeled space-separated numbers are not treated as phones.
-        "PHONE",
-        re.compile(
-            r"(?:\+(?=(?:[\s.-]?\d){8,15}(?![\s.-]?\d))"
-            r"\d{1,3}(?:[\s.-]?\d{1,4}){2,5}(?!\d)"
-            r"|(?:\+?1[\s.-]?)?\(\d{3}\)\s?\d{3}[\s.-]\d{4}(?!\d)"
-            r"|(?<![\d-])(?:\+?1[.-])?\d{3}[.-]\d{3}[.-]\d{4}(?![\d-])"
-            r"|(?P<lbl>(?<![A-Za-z])(?:tel|phone|ph|call|cell|mobile|fax)"
-            r"(?![A-Za-z])\.?[\s:#]*)"
-            r"(?:\(?\d{3}\)?[\s.-]{1,2})?\d{3}[\s.-]\d{4}(?!\d))"
-            r"(?:\s*(?:x|ext\.?)\s*\d{1,5}(?!\d))?",
-            re.IGNORECASE,
-        ),
-    ),
-    ("VA_FILE", re.compile(r"\bC\s?\d{7,8}\b")),
-    (
-        # Military service numbers: labeled, or two capital letters and 8
-        # digits (RA12345678 style).
-        "SERVICE_NUMBER",
-        re.compile(
-            rf"(?P<lbl>\b(?:service|serial|svc)\s*(?:number|num|no\.?|#){_FILLER}"
-            rf"[\s:#.=-]*{_CODE_FILLER})"
-            rf"[A-Z]{{0,3}}{_GROUP_SEP}\d(?:{_GROUP_SEP}\d){{5,15}}(?!\d)",
-            re.IGNORECASE,
-        ),
-    ),
-    ("SERVICE_NUMBER", re.compile(r"\b[A-Z]{2}\d{8}\b")),
-    (
-        # Labeled bank routing and account numbers (6 to 17 digits).
-        "BANK",
-        re.compile(
-            rf"(?P<lbl>\b(?:{_LBL_BANK}){_FILLER}[\s:#.=-]*{_CODE_FILLER})"
-            rf"\d(?:{_GROUP_SEP}\d){{5,16}}(?!\d)",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "ID",
-        re.compile(
-            rf"(?P<lbl>{_ANY_IDENT_LABEL}{_FILLER}[\s:#.=-]*{_CODE_FILLER})"
-            rf"[A-Z]{{0,3}}{_GROUP_SEP}\d(?:{_GROUP_SEP}\d){{3,19}}(?!\d)",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "ADDRESS",
-        re.compile(
-            r"\b\d{1,6}\s+(?:[A-Z][A-Za-z0-9.]*\s+){1,4}"
-            r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr"
-            r"|Court|Ct|Way|Place|Pl|Terrace|Ter|Circle|Cir|Highway|Hwy"
-            r"|Parkway|Pkwy)\b\.?"
-            r"(?:,?\s+(?:Apt|Suite|Unit|#)\s*\w+)?"
-            r"|\bP\.?\s?O\.?\s*Box\s*\d+"
-            # Rural and military route addresses: a route prefix (RR, R.R.,
-            # Rt, Rte, Route, Rural Route/Rte, HC, HCR, PSC), an optional route
-            # number, an optional comma, then a Box number. "Rural Route 4"
-            # with no Box still counts. A bare "RR 16" (respiratory rate) and
-            # "HR 72" have no Box, so they are left alone.
-            r"|\bRural\s+R(?:oute|te)\.?\s*(?:#\s*)?\d+"
-            r"(?:\s*,?\s*Box\s*(?:#\s*)?\d+)?"
-            r"|\b(?:R\.?\s?R\.?|R(?:oute|te|t)?\.?|HCR?|PSC)"
-            r"\s*(?:#\s*)?\d*\s*,?\s*Box\s*(?:#\s*)?\d+",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        # State + ZIP. Uppercase state after a capitalized city word or a
-        # comma; a lowercase state only right after a comma.
-        "ADDRESS",
-        re.compile(
-            r"(?P<lbl>(?P<c>,[ \t]*)|\b[A-Z][a-z]+[ \t]+|^[ \t]*)"
-            rf"(?(c)(?i:{STATES})|(?:{STATES}))\b[ \t]*,?[ \t]*"
-            r"\d{5}(?:-\d{4})?(?!\d)"
-            r"(?=[ \t]*(?:$|[^\w\s]|(?:USA|U\.S\.A?\.?|United States)\b)"
-            # or a connecting word ("Austin TX 78701 with spouse"); counts such
-            # as "OK 12345 today" stay unredacted.
-            r"|[ \t]+(?:with|and|since|until|near|where|while|from)\b)",
-            re.MULTILINE,
-        ),
-    ),
-    # Labeled names (see _NAME_* below). Names without a label are NOT
-    # redacted. These run after ADDRESS so a street suffix "Dr" is handled
-    # there first.
-    ("NAME", _NAME_RULE),
-]
-
-
-def _spaced(word: str) -> str:
-    """Regex for word whose letters may be split by dots, hyphens or line breaks."""
-    return r"[.\-\s]{0,3}".join(word)
-
-
-# Birth labels. (?<![A-Za-z]) instead of \b so "_" counts as a boundary.
-# Letters may be split across lines or hyphenated ("D\nO\nB", "Bir-\nth").
-BIRTH_LABEL = re.compile(
-    r"(?<![A-Za-z])(?:"
-    + _spaced("dob")
-    + "|"
-    + _spaced("birth")
-    + r"(?:day|date)?|"
-    + _spaced("born")
-    + r"|b\.(?=\s*[(\[]?\d))(?![A-Za-z])",
-    re.IGNORECASE,
-)
-# Ordinal day words ("the fourteenth of March, 1961").
-ORD_WORDS = (
-    r"(?:(?:twenty|thirty)[\s-]?)?(?:first|second|third|fourth|fifth|sixth"
-    r"|seventh|eighth|ninth)|tenth|eleventh|twelfth|thirteenth|fourteenth"
-    r"|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth"
-)
-# Any date-like value, including space-separated numeric dates and prose
-# such as "March of 1961, the 14th" (only redacted next to a birth label).
-DATE_LIKE = re.compile(
-    r"(?<!\d)(?:" + DATE_VALUE + r"|\d{1,2}\s\d{1,2}\s\d{2,4}(?!\d)"
-    r"|\d{4}\s\d{1,2}\s\d{1,2}(?!\d)"
-    rf"|(?:\b(?:the\s+)?(?:{ORD_WORDS}|\d{{1,2}}{ORD})\s+(?:day\s+)?of\s+)?"
-    rf"\b{MONTHS},?\s+(?:of\s+)?\d{{4}}(?:,?\s+the\s+\d{{1,2}}{ORD}\b)?"
-    rf"|\b{MONTHS}\s+\d{{1,2}}{ORD},?\s+['\u2019]\d{{2}}(?!\d))",
-    re.IGNORECASE,
-)
-BIRTH_WINDOW = 80  # a date may start this many characters after a label
-# The label-to-date link never crosses a clause break ("DOB on file; exam 03/14/2024").
-CLAUSE_BREAK = re.compile(r"[;!?]|\.\s+[A-Z]")
-BIRTH_WINDOW_AFTER = 12  # or end this many characters before one ("(DOB)")
-
-
-def _redact_birth_dates(text: str) -> tuple[str, int]:
-    """Redact every date-like value that starts shortly after a birth label.
-
-    When to use: first step of redact(), in every mode (keep_dates or not),
-    so labeled dates of birth of any age and format are removed.
-    """
-    dates = list(DATE_LIKE.finditer(text))
-    chosen: dict[int, re.Match[str]] = {}
-    for label in BIRTH_LABEL.finditer(text):
-        after = [
-            d
-            for d in dates
-            if label.end() <= d.start() <= label.end() + BIRTH_WINDOW
-            and not CLAUSE_BREAK.search(text, label.end(), d.start())
-        ]
-        if after:
-            chosen[after[0].start()] = after[0]
-        before = [
-            d
-            for d in dates
-            if label.start() - BIRTH_WINDOW_AFTER <= d.end() <= label.start()
-        ]
-        if before:
-            chosen[before[-1].start()] = before[-1]
+def _render(result, kinds=None) -> tuple[str, dict[str, int]]:
+    """Show a scan: each merged region becomes its tag; line breaks are kept."""
+    text = result.text
     out: list[str] = []
-    pos = 0
-    count = 0
-    for start in sorted(chosen):
-        date = chosen[start]
-        if date.start() < pos:
-            continue
-        out.append(text[slice(pos, date.start())])
-        out.append("[REDACTED-DOB]" + "\n" * date.group(0).count("\n"))
-        pos = date.end()
-        count += 1
-    out.append(text[pos:])
-    return "".join(out), count
-
-
-# Characters that hide or disguise separators inside identifiers.
-INVISIBLE = dict.fromkeys(map(ord, "\u00ad\u200b\u200c\u200d\u2060\ufeff"))
-INVISIBLE.update({c: "-" for c in range(0x2010, 0x2016)})
-INVISIBLE.update({0x2212: "-", 0xFE63: "-", 0xFF0D: "-"})
-INVISIBLE.update({c: " " for c in (0x00A0, 0x2007, 0x202F)})
-STRIP_CATEGORIES = {"Mn", "Cf"}
-
-# Label-free full dates. Each pattern names the year group y (2 or 4 digits).
-DATE_PATTERNS = [
-    re.compile(r"(?<!\d)\d{1,2}[/.-]\d{1,2}[/.-](?P<y>\d{4}|\d{2})(?!\d)"),
-    re.compile(r"(?<!\d)(?P<y>\d{4})[/.-]\d{1,2}[/.-]\d{1,2}(?!\d)"),
-    re.compile(
-        r"(?<!\d)(?P<y>(?:19|20)\d{2})(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?!\d)"
-    ),
-    re.compile(
-        rf"\b{MONTHS}\s?\d{{1,2}}{ORD},?\s(?P<y>\d{{4}}|\d{{2}})(?!\d)", re.IGNORECASE
-    ),
-    re.compile(
-        rf"\b\d{{1,2}}{ORD}[\s-]{MONTHS}[\s,-]*(?P<y>\d{{4}}|\d{{2}})(?!\d)",
-        re.IGNORECASE,
-    ),
-]
-BIRTH_YEAR_MAX_AGE_GAP = 17  # dates this many or more years old may be a birth date
-
-
-def _full_year(text: str) -> int:
-    """Turn a 2- or 4-digit year into a 4-digit year.
-
-    When to use: for date matches; 2-digit years up to this year mean 20xx.
-    """
-    year = int(text)
-    if len(text) == 2:
-        this = datetime.date.today().year
-        year += 2000 if year <= this % 100 else 1900
-    return year
-
-
-def _date_tag(m: re.Match[str]) -> str:
-    """Return [DATE-YYYY] for a date old enough to be a birth date.
-
-    When to use: as the replacement callback for DATE_PATTERNS.
-    """
-    year = _full_year(m.group("y"))
-    if year > datetime.date.today().year - BIRTH_YEAR_MAX_AGE_GAP:
-        return m.group(0)
-    if _is_rating_list(m):
-        return m.group(0)
-    return f"[DATE-{year}]"
-
-
-# "10/20/30" next to rating words is a list of ratings, not Oct 20, 1930.
-# A birth-labeled date ("DOB 10/20/30") is already redacted by the label pass.
-_RATING_LIST = re.compile(r"(?:100|[1-9]0)(?:[/.-](?:100|[1-9]0)){2,}")
-_RATING_WORD = re.compile(r"%|percent|\brat(?:ed|ing|ings)\b", re.IGNORECASE)
-
-
-def _is_rating_list(m: re.Match[str]) -> bool:
-    """True for a run of 10..100 multiples next to a rating word or "%"."""
-    if not _RATING_LIST.fullmatch(m.group(0)):
-        return False
-    lo, hi = max(0, m.start() - 40), m.end() + 20
-    around = m.string[lo:hi]
-    return bool(_RATING_WORD.search(around))
-
-
-# An explicit part/serial label right before a number means it is not a phone.
-PART_LABEL = re.compile(
-    r"(?<![A-Za-z])(?:part|p/n|pn|sku|model|serial|s/n|lot|item|ref)"
-    r"(?:\s*(?:no\.?|number|#))?[\s.:#]*$",
-    re.IGNORECASE,
-)
-
-
-def _tag(kind: str):
-    """Build a replacement that keeps any label and the match's line breaks.
-
-    When to use: as the replacement callback for REDACTIONS patterns.
-    """
-
-    def replace(m: re.Match[str]) -> str:
-        label = m.groupdict().get("lbl") or ""
-        if kind == "PHONE" and not label:
-            if PART_LABEL.search(m.string[slice(max(0, m.start() - 24), m.start())]):
-                return m.group(0)
-        value = m.group(0).removeprefix(label)
-        return label + f"[REDACTED-{kind}]" + "\n" * value.count("\n")
-
-    return replace
+    counts: dict[str, int] = {}
+    last = 0
+    for start, end, top in identifier_detect.regions(result, kinds):
+        out.append(text[last:start])
+        out.append(top.tag + "\n" * text.count("\n", start, end))
+        counts[top.kind] = counts.get(top.kind, 0) + 1
+        last = end
+    out.append(text[last:])
+    return "".join(out), counts
 
 
 def redact_names(text: str) -> str:
-    """Apply only the labeled-name rules (for exports such as report JSON).
+    """Apply only the labeled-name rule (for exports such as report JSON).
 
     When to use: on text that must keep numbers and dates (hashes, as-of
     dates) but must not carry a labeled name.
     """
-    for kind, pattern in REDACTIONS:
-        if kind == "NAME":
-            text = pattern.sub(_tag(kind), text)
-    return text
+    return _render(identifier_detect.scan(text, keep_dates=True), {"NAME"})[0]
 
 
 # Abbreviations whose period does not end a sentence (lowercase compare).
@@ -622,14 +107,12 @@ def split_sentences(text: str) -> list[str]:
 
 
 def strip_invisible(text: str) -> str:
-    """Map look-alike separators and drop invisible and combining characters.
+    """Map look-alike dashes and spaces and drop invisible and combining
+    characters (the detector's own sets; no NFKC, no redaction).
 
     When to use: before comparing a quote with record text; no redaction.
     """
-    text = text.translate(INVISIBLE)
-    return "".join(
-        ch for ch in text if unicodedata.category(ch) not in STRIP_CATEGORIES
-    )
+    return identifier_detect.strip_invisible(text)
 
 
 def contains_quote(page: str, quote: str) -> bool:
@@ -650,28 +133,11 @@ def redact(text: str, keep_dates: bool = False) -> tuple[str, dict[str, int]]:
     Returns the redacted text and a count of replacements per kind.
     Line breaks inside a match are kept so line numbers do not shift.
     Unless keep_dates is True, full dates 17 or more years old become
-    [DATE-YYYY] because they may be birth dates.
+    [DATE-YYYY] because they may be birth dates. Detection is
+    identifier_detect.scan(), the same call the form blocklist makes; the
+    text shown is the detector's normalized text.
     """
-    counts: dict[str, int] = {}
-    text = text.translate(INVISIBLE)
-    text = "".join(
-        ch for ch in text if unicodedata.category(ch) not in STRIP_CATEGORIES
-    )
-    text, n = _redact_birth_dates(text)
-    if n:
-        counts["DOB"] = n
-    for kind, pattern in REDACTIONS:
-        text, n = pattern.subn(_tag(kind), text)
-        if n:
-            counts[kind] = counts.get(kind, 0) + n
-    if not keep_dates:
-        before = text.count("[DATE-")
-        for pattern in DATE_PATTERNS:
-            text = pattern.sub(_date_tag, text)
-        dated = text.count("[DATE-") - before
-        if dated:
-            counts["OLD_DATE"] = dated
-    return text, counts
+    return _render(identifier_detect.scan(text, keep_dates=keep_dates))
 
 
 def split_text_pages(text: str) -> list[str]:

@@ -331,7 +331,7 @@ FIELD_MAC_PREFIX = "field-value\x1f"
 # closed (unlock again). Keeps the check from working as a guessing oracle.
 QUOTE_CHECK_LIMIT = 50
 MIN_CHECK_QUOTE = 20
-_TAG_ONLY = re.compile(r"\[REDACTED-[A-Z_]+\]|\[DATE-\d{4}\]")
+_TAG_ONLY = local_search.TAG  # the detector's one tag pattern
 _USER_PREFIX = re.compile(r"^(?:\s*USER_UPDATED\s*:\s*)+", re.IGNORECASE)
 
 
