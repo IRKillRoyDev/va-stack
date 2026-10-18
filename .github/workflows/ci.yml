@@ -52,7 +52,7 @@ jobs:
       - name: Qt system libraries (PySide6)
         run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0
       - name: Install pinned dependencies
-        run: pip install -r requirements-dev.txt
+        run: pip install -r requirements-dev.txt -c constraints.txt
       - name: Ruff lint
         run: ruff check .
       - name: Ruff format check
@@ -71,10 +71,10 @@ jobs:
       - name: Install xvfb and the Qt system libraries (PySide6)
         run: sudo apt-get update && sudo apt-get install -y xvfb libegl1 libxkbcommon0
       - name: Install pinned dependencies
-        run: pip install -r requirements-dev.txt
+        run: pip install -r requirements-dev.txt -c constraints.txt
       - name: va-stack entry point installs
         run: |
-          python -m pip install -e .
+          python -m pip install -e . -c constraints.txt
           va-stack --help
       - name: Drive the app and review windows under Xvfb (with screenshots)
         env:
@@ -105,10 +105,10 @@ jobs:
           python3 --version
           python3 -m venv .venv
           source .venv/bin/activate
-          python -m pip install -e .
+          python -m pip install -e . -c constraints.txt
           python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
           va-stack --help
-          python -m pip install -r requirements-dev.txt
+          python -m pip install -r requirements-dev.txt -c constraints.txt
       - name: Vault opens encrypted (SQLCipher, not plain sqlite3)
         shell: bash
         run: |
@@ -146,13 +146,13 @@ jobs:
           py --version
           py -m venv .venv
           .venv\Scripts\Activate.ps1
-          python -m pip install -e .
+          python -m pip install -e . -c constraints.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python -c "import sqlcipher3; print(sqlcipher3.connect(':memory:').execute('PRAGMA cipher_version').fetchone()[0])"
           if ($LASTEXITCODE -ne 0) { exit 1 }
           va-stack --help
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          python -m pip install -r requirements-dev.txt
+          python -m pip install -r requirements-dev.txt -c constraints.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Vault opens encrypted (SQLCipher, not plain sqlite3)
         shell: pwsh
@@ -230,5 +230,5 @@ jobs:
         run: |
           py=.venv/bin/python
           if [ "$RUNNER_OS" = "Windows" ]; then py=.venv/Scripts/python.exe; fi
-          "$py" -m pip install pytest==8.3.3
+          "$py" -m pip install pytest==8.3.3 -c constraints.txt
           "$py" -m pytest -v -rs tests/test_setup_twice.py

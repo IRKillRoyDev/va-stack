@@ -95,7 +95,7 @@ Open the **Terminal** app (press Cmd+Space, type `Terminal`, press Enter).
 6. Install va-stack and what it needs, including the encrypted database driver.
 
    ```bash
-   python -m pip install -e .
+   python -m pip install -e . -c constraints.txt
    ```
 
    Success looks like a last line starting with `Successfully installed`.
@@ -178,7 +178,7 @@ Open **PowerShell** (press the Windows key, type `PowerShell`, press Enter).
 6. Install va-stack and what it needs, including the encrypted database driver.
 
    ```powershell
-   python -m pip install -e .
+   python -m pip install -e . -c constraints.txt
    ```
 
    Success looks like a last line starting with `Successfully installed`.
@@ -252,7 +252,7 @@ Open a terminal window.
 6. Install va-stack and what it needs, including the encrypted database driver.
 
    ```bash
-   python -m pip install -e .
+   python -m pip install -e . -c constraints.txt
    ```
 
    Success looks like a last line starting with `Successfully installed`.
@@ -356,7 +356,7 @@ runs the pipeline. More in [docs/README.md](docs/README.md).
 ## Local search script
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt -c constraints.txt
 python3 scripts/local_search.py "/path/to/records" -t "tinnitus" -t "lumbar" --dry-run
 python3 scripts/local_search.py "/path/to/records" -t "tinnitus" --max-hits-per-term 20 --max-total 100 --context 80
 python3 scripts/local_search.py "/path/to/records" -t "separation" --keep-dates  # keep exact old dates
@@ -368,7 +368,7 @@ disk. Output is redacted JSON for the user to review before sharing.
 ## Encrypted vault (optional)
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt -c constraints.txt
 python3 scripts/records_vault.py init records.db
 python3 scripts/records_vault.py ingest records.db "/path/to/records" --bot-id <id>
 python3 scripts/records_vault.py search records.db --bot-id <id> -t "tinnitus"
