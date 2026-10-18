@@ -68,15 +68,17 @@ def test_n1_bare_year_documented_gap():
 
 
 # N4: no bare 7-digit phones
-# Round 18: never phones. "250-5000 ref" is still hidden (an identifier next
-# to "ref"); the clinical/measurement allowlist frees the other two, in the
+# Round 18: never phones. "250-5000 ref" is hidden (an identifier next to
+# "ref"); round 18 freed the other two, round 19 hides them again, in the
 # pane and on forms alike (block == redact).
 def test_n4_ranges_not_phones():
     out, counts = ls.redact("250-5000 ref")
     assert "PHONE" not in counts and "[REDACTED-" in out and "5000" not in out, out
+    # Round 19: these join to 7 digits, so they are hidden as a NUMBER
+    # (accepted fail-safe over-block), and still never called a phone.
     for s in ("LDL 130-1600", "range 120.1300 units"):
         out, counts = ls.redact(s)
-        assert out == s and not counts, (out, counts)
+        assert "PHONE" not in counts and counts.get("NUMBER"), (out, counts)
 
 
 @pytest.mark.parametrize(

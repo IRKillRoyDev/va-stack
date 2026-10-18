@@ -427,8 +427,16 @@ def test_save_new_never_replaces_and_counts(fe, tmp_path):
 
 def test_files_are_opened_with_xb_only(fe):
     src = (ROOT / "scripts" / "fill_engine.py").read_text(encoding="utf-8")
+    # r19: every write goes through the shared safe_path.write_new, which
+    # creates with O_CREAT | O_EXCL | O_NOFOLLOW (the "xb" guarantee) in the
+    # re-checked pinned folder; fill_engine opens nothing for writing itself.
     modes = re.findall(r"open\([^)]*?,\s*\"([a-z+]+)\"", src)
-    assert modes and set(modes) == {"xb"}
+    assert not modes
+    assert "safe_path.write_new(" in src
+    sp = (ROOT / "scripts" / "safe_path.py").read_text(encoding="utf-8")
+    body = sp.split("def write_new(", 1)[1].split("\ndef ", 1)[0]
+    assert "os.O_EXCL" in body and "os.O_CREAT" in body
+    assert "_NOFOLLOW" in sp.split("def _open_in(", 1)[1].split("\ndef ", 1)[0]
     for banned in ("write_bytes", "write_text", '"wb"', '"w"', '"ab"', "os.replace"):
         assert banned not in src, banned
 

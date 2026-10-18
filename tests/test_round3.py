@@ -90,12 +90,15 @@ def test_n4_no_phone_false_positive(s):
     assert default(s) == s
 
 
-# Round 18: the shared clinical/measurement allowlist frees these former
-# round-17 over-blocks in the pane and on forms alike (block == redact).
+# Round 18 freed these round-17 over-blocks; round 19 hides them again, in
+# the pane and on forms alike (block == redact).
 @pytest.mark.parametrize("s", ["dose 100 1000 mg", "flexion 120 1300"])
 def test_n4_seven_digit_runs_hidden_like_the_blocklist(s):
+    # Round 19: the measurement shape never excuses 7+ digits after
+    # separator normalization, so these are hidden again (accepted
+    # fail-safe over-block; see test_r17_defense OVER_BLOCK_STILL).
     out, counts = ls.redact(s)
-    assert out == s and not counts, (out, counts)
+    assert out != s and counts.get("NUMBER"), (out, counts)
 
 
 @pytest.mark.parametrize(

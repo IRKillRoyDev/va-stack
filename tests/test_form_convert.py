@@ -306,20 +306,32 @@ def test_a_taken_name_gets_a_numeric_suffix_and_nothing_is_replaced(fc, case):
 
 
 def test_files_are_opened_with_mode_xb(fc, case, monkeypatch):
+    # r19: writes go through safe_path (os.open in the pinned folder); the
+    # "xb" guarantee is O_CREAT | O_EXCL, plus O_NOFOLLOW.
     import builtins
+    import os
 
-    modes = []
-    real_open = builtins.open
+    modes, flags_seen = [], []
+    real_open, real_os_open = builtins.open, os.open
+    write = os.O_WRONLY | os.O_RDWR
 
     def spy(file, mode="r", *args, **kwargs):
         if str(file).endswith(".pdf") and ("w" in mode or "x" in mode or "a" in mode):
             modes.append(mode)
         return real_open(file, mode, *args, **kwargs)
 
+    def os_spy(path, flags, *args, **kwargs):
+        if str(path).endswith(".pdf") and flags & write:
+            flags_seen.append(flags)
+        return real_os_open(path, flags, *args, **kwargs)
+
     monkeypatch.setattr(builtins, "open", spy)
+    monkeypatch.setattr(os, "open", os_spy)
     src, raw, req = case
     fc.convert(src, raw, req, ask=_yes)
-    assert modes == ["xb"]
+    assert modes == [] and len(flags_seen) == 1
+    need = os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    assert flags_seen[0] & need == need
 
 
 # ---------------- explicit confirm ----------------

@@ -106,3 +106,22 @@ def pytest_sessionfinish(session, exitstatus):
             SENTINEL.rmdir()  # empty on a clean run; kept for a look otherwise
         except OSError:
             pass
+
+
+# Cases an OS cannot do at all, in test files kept as their authors wrote
+# them (r19 Defense tests: formatting-only changes allowed). Skipped with the
+# reason so the CI log shows them under -rs.
+_OS_CANNOT = {
+    "test_r19_defense.py::test_append_target_not_regular_single_link_refused[fifo]": (
+        not hasattr(os, "mkfifo"),
+        "this OS has no named pipes in the file system (os.mkfifo)",
+    ),
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        key = f"{Path(item.fspath).name}::{item.name}"
+        cannot = _OS_CANNOT.get(key)
+        if cannot and cannot[0]:
+            item.add_marker(pytest.mark.skip(reason=cannot[1]))

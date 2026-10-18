@@ -500,14 +500,17 @@ OVER_BLOCK_STILL = [
     "555 010 0199",
     "1,250,000",
     "ref 555-123-4567",
-]
-# Round 18 clinical/measurement allowlist frees these former over-blocks.
-OVER_BLOCK_FREED = [
+    # Round 19: the shared measurement shape never excuses a run of 7+
+    # digits after separator normalization (so "Weight 000123456789" and
+    # "Weight 0001234 567" block). These four join to 7 digits, so the
+    # r18 allowlist no longer frees them: an accepted +4 over-block.
     "dose 100 1000 mg",
     "flexion 120 1300",
     "LDL 130-1600",
     "range 120.1300 units",
 ]
+# Round 18 freed the four above; round 19 re-blocks them (see note).
+OVER_BLOCK_FREED: list[str] = []
 OVER_BLOCK_BASELINE = OVER_BLOCK_STILL + OVER_BLOCK_FREED
 
 
@@ -546,7 +549,10 @@ def test_linear_100k_under_1s(unit, fn_name):
 # Real output paths: draft, pane, search, file name, CLI, access log.
 # ---------------------------------------------------------------------------
 def _vault(tmp_path):
-    rv = _load("records_vault")
+    # Build the vault from the records_vault that form_fill holds: other test
+    # files re-exec scripts/records_vault.py into sys.modules, and form_fill's
+    # strict ``type(vault) is records_vault.Vault`` must see its own class.
+    rv = _load("form_fill").records_vault
     db = tmp_path / "v.db"
     rv.create_vault(
         db, bytearray(b"fake pass"), kdf_params=FAST_KDF, insecure_test_kdf=True

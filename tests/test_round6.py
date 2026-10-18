@@ -138,7 +138,7 @@ def test_exported_head_catches_joint_rollback(tmp_path):
     snap = {p: p.read_bytes() for p in (db, head)}
     with rv.Vault.open(db, bytearray(PW), gate()) as v:
         v.search(["strain"], bot_id=BOT)
-        v.export_head(keep)
+        v.export_head(keep, export_root=keep.parent)
         assert v.verify_log(external_head=keep)
     for p, data in snap.items():
         p.write_bytes(data)
