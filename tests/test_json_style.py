@@ -3,7 +3,9 @@
 The schema gate runs `biome ci` on JSON files. Biome's defaults (tabs) fit
 none of them, so biome.json sets what the files already use instead of
 reformatting them: spaces, 2 per level, objects and arrays always expanded,
-and 1 space per level for the files written that way. Fake data only.
+and 1 space per level for the files written that way. Every tracked JSON
+file is in that format (Biome formatted the last 13), so each one ends with
+a newline and keeps no hand-compacted objects. Fake data only.
 """
 
 from __future__ import annotations
@@ -68,3 +70,24 @@ def test_every_json_file_gets_the_indent_it_already_uses():
         if unit and unit != _width_for(path, cfg):
             wrong.append((path, unit))
     assert not wrong, wrong
+
+
+def test_every_json_file_ends_with_one_newline():
+    bad = []
+    for path in _tracked_json():
+        text = (ROOT / path).read_text(encoding="utf-8")
+        if not text.endswith("\n") or text.endswith("\n\n"):
+            bad.append(path)
+    assert not bad, bad
+
+
+def test_no_json_object_is_hand_compacted_on_one_line():
+    """With expand always, a non-empty object or array never shares a line."""
+    bad = []
+    for path in _tracked_json():
+        for n, line in enumerate((ROOT / path).read_text("utf-8").split("\n"), 1):
+            body = line.strip().rstrip(",")
+            if re.search(r"^\{.+\}$|^\[.+\]$|: (\{.+\}|\[.+\])$", body):
+                bad.append(f"{path}:{n}")
+                break
+    assert not bad, bad

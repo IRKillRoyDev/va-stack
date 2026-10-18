@@ -1254,6 +1254,18 @@ def test_b4_a_form_that_uses_no_catalog_name_is_an_empty_answer(fm, request_):
     assert fm.parse_field_map(_raw(m), request_)["fields"] == []
 
 
+def test_b4_form_needing_only_unrequested_names_maps_them_all_as_missing(fm, request_):
+    """missing = what the form needs that was not requested from the vault."""
+    ssn = _map(request_)["fields"][2]
+    email = {**ssn, "rect": [320, 560, 420, 578], "data_point": "email"}
+    email.pop("label")
+    m = _map(request_, fields=[ssn, email], missing=["email", "ssn"])
+    assert fm.parse_field_map(_raw(m), request_)["missing"] == ["email", "ssn"]
+    for missing in ([], ["ssn"], ["email"]):  # each mapped name must be listed
+        with pytest.raises(fm.FieldMapError):
+            fm.parse_field_map(_raw({**m, "missing": missing}), request_)
+
+
 def test_b4_empty_fields_cannot_list_missing_names(fm, request_):
     msg = _err(fm, _raw(_map(request_, fields=[], missing=["ssn"])), request_)
     assert "$.missing[0]" in msg, msg
