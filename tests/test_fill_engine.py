@@ -387,13 +387,29 @@ def test_repeated_runs_keep_counting_up(fe, vault, setup):
     ]
 
 
-def test_completed_goes_to_the_drafts_folder_by_default(fe, vault, setup, monkeypatch):
+def test_completed_goes_to_the_completed_forms_folder_by_default(
+    fe, vault, setup, monkeypatch
+):
     src, req, raw, _ = setup
     data = src.parent.parent / "data"
     monkeypatch.setattr(fe.form_fill.app_paths, "data_dir", lambda: data)
-    res = fe.fill_form(vault, src, raw, req, bot_id=BOT)
-    assert res.completed_path.parent == data / "drafts"
-    assert res.completed_path.parent != src.parent
+    assert fe.COMPLETED_DIR_NAME == "Completed forms"
+    first = fe.fill_form(vault, src, raw, req, bot_id=BOT)
+    second = fe.fill_form(vault, src, raw, req, bot_id=BOT)
+    folder = data / "Completed forms"
+    assert first.completed_path == folder / "claim form completed.pdf"
+    assert second.completed_path == folder / "claim form completed-2.pdf"
+    assert not (data / "drafts").exists()
+
+
+def test_completed_may_not_go_in_the_drafts_folder(fe, vault, setup, monkeypatch):
+    src, req, raw, _ = setup
+    data = src.parent.parent / "data"
+    monkeypatch.setattr(fe.form_fill.app_paths, "data_dir", lambda: data)
+    for drafts in (data / "drafts", data / "drafts" / ".." / "drafts"):
+        with pytest.raises(fe.FillError):
+            fe.fill_form(vault, src, raw, req, bot_id=BOT, completed_dir=drafts)
+    assert not (data / "drafts").exists() or not list((data / "drafts").iterdir())
 
 
 def test_completed_may_not_go_in_the_source_folder(fe, vault, setup):
@@ -480,3 +496,56 @@ def test_master_data_masks_identifiers_by_default(vault):
     shown = repr(model.tabs())
     for value in IDENTIFIERS.values():
         _absent(value, shown)
+
+
+# ---------------- step (a): two orderings of the same field list ---------
+def _two_place_map(req):
+    return _map(
+        req,
+        [
+            _entry(req, "Condition", "condition"),
+            _entry(req, "ApproxDate", "approx_date", "date"),
+            _entry(req, "SSN", "ssn"),
+            _entry(req, "Remarks", "condition"),
+        ],
+    )
+
+
+def test_places_list_every_named_field_once(fe, setup):
+    src, req, _, _ = setup
+    places = fe.places(_two_place_map(req), req)
+    assert [(p.data_point, p.field, p.page) for p in places] == [
+        ("condition", "Condition", 1),
+        ("approx_date", "ApproxDate", 1),
+        ("ssn", "SSN", 1),
+        ("condition", "Remarks", 1),
+    ]
+
+
+def test_by_data_point_groups_every_place_of_a_point(fe, setup):
+    src, req, _, _ = setup
+    steps = fe.steps(fe.places(_two_place_map(req), req), by_data_point=True)
+    assert [(s.data_point, [p.field for p in s.places]) for s in steps] == [
+        ("ssn", ["SSN"]),
+        ("condition", ["Condition", "Remarks"]),
+        ("approx_date", ["ApproxDate"]),
+    ]
+
+
+def test_by_page_or_field_follows_the_form(fe, setup):
+    src, req, _, _ = setup
+    steps = fe.steps(fe.places(_two_place_map(req), req), by_data_point=False)
+    assert [(s.data_point, [p.field for p in s.places]) for s in steps] == [
+        ("condition", ["Condition"]),
+        ("approx_date", ["ApproxDate"]),
+        ("ssn", ["SSN"]),
+        ("condition", ["Remarks"]),
+    ]
+
+
+def test_both_orders_hold_the_same_places(fe, setup):
+    src, req, _, _ = setup
+    places = fe.places(_two_place_map(req), req)
+    for flag in (True, False):
+        flat = [p for s in fe.steps(places, by_data_point=flag) for p in s.places]
+        assert sorted(flat) == sorted(places) and len(flat) == len(places)

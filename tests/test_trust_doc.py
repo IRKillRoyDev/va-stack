@@ -237,3 +237,20 @@ def test_trust_doc_says_the_completed_copy_holds_identifiers():
         "Drafts never hold them",
     ):
         assert needle in part, needle
+
+
+def test_trust_doc_names_the_completed_forms_folder():
+    """Step (a): completed copies have their own folder, apart from drafts."""
+    text = " ".join(TRUST.read_text(encoding="utf-8").split())
+    part = text.split("## Folders and files it writes", 1)[1].split("## ", 1)[0]
+    for needle in (
+        "`Completed forms`",
+        "full personal data",
+        "SSN",
+        "file numbers",
+        "not encrypted",
+        "never in `drafts`",
+    ):
+        assert needle in part, needle
+    drafts = part.split("`drafts`:", 1)[1].split("- **", 1)[0]
+    assert "completed" not in drafts.split("never in")[0].lower()
