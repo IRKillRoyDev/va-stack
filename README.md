@@ -4,6 +4,9 @@ Skills for a bot that helps veterans **prepare** (not file) VA disability claims
 
 Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 
+What the program may read, write and send is listed in plain words in
+[TRUST.md](TRUST.md).
+
 ## Install
 
 ### Recommended: let your bot install it
@@ -219,8 +222,11 @@ Open a terminal window.
 **If this fails (Linux):**
 - `No module named venv` or `ensurepip is not available` (Debian, Ubuntu): run `sudo apt install python3-venv`, then repeat step 4.
 - `pip: command not found`: use `python -m pip` (inside `(.venv)`) or `python3 -m pip` (outside it), as in step 6.
-- The review window does not open: run `sudo apt install libegl1 libxkbcommon0` (Qt system libraries for PySide6), or use the text walk-through with `--cli` (below).
-- `libEGL.so.1: cannot open shared object file` (the PySide6 windows): run `sudo apt install libegl1 libxkbcommon0`, then try again.
+- The review window does not open: run `sudo apt install libegl1 libxkbcommon0`
+  (Qt system libraries for PySide6), or use the text walk-through with `--cli`
+  (below).
+- `libEGL.so.1: cannot open shared object file` (the PySide6 windows): run `sudo
+  apt install libegl1 libxkbcommon0`, then try again.
 - `(.venv)` is gone: you opened a new window. Run step 3 and step 5 again.
 
 ### Try it with the sample data (optional)
@@ -312,9 +318,77 @@ Each command shows the consent-to-share notice, then prompts for the password lo
 - Your original form is never changed (it is checked by hash). Each draft is a new file in the `drafts` folder inside your vault folder: `form-draft.pdf`, then `form-draft-2.pdf`, and so on. Nothing is replaced.
 - Drafts are ordinary PDF files, not encrypted. Delete them when you are done.
 
+## Check this program
+
+You do not have to take our word for it. You can ask your own bot to check
+this repository before you use it. Copy the prompt below and give it to
+your bot along with a link to, or a copy of, this repository:
+
+```text
+Please review the va-stack repository for me and answer in plain words.
+1. Network: search every file for code that can use the network (socket,
+   ssl, http, urllib, requests, httpx, aiohttp, websockets, subprocess,
+   curl, wget and similar). List each place, and say whether the app runs
+   it or only setup or a maintainer tool does.
+2. Files: list all the files and folders the program reads, writes or
+   deletes, with file and line references, and compare that with TRUST.md.
+3. Vault encryption: check how scripts/records_vault.py encrypts the vault
+   (SQLCipher key, Argon2id settings, where the salt is kept) and whether
+   the passphrase is ever saved, printed, logged or passed on the command
+   line.
+4. Identifiers: check how scripts/local_search.py and
+   scripts/identifier_blocklist.py hide names, Social Security numbers,
+   bank and service numbers, and what they can miss.
+Point out anything that disagrees with TRUST.md or SAFETY.md. Do not run
+any code from the repository while you check.
+```
+
+A bot's review can be wrong too. It is one more check, not a guarantee.
+
+## Verify a download
+
+These steps apply once releases are published on the repository's GitHub
+Releases page. There are none yet. When there are, each release will list
+its files and a `SHA256SUMS` file, and the exact file names will be shown
+there.
+
+1. Download the file you want and `SHA256SUMS` from the same release.
+2. Work out the file's fingerprint (SHA-256) and compare it with the line
+   for that file in `SHA256SUMS`. They must match exactly.
+   - Mac or Linux, in Terminal:
+
+     ```bash
+     shasum -a 256 <file>
+     ```
+
+   - Windows, in PowerShell (it prints capital letters; that is fine):
+
+     ```powershell
+     Get-FileHash <file> -Algorithm SHA256
+     ```
+
+3. Check that the file was built by this repository's GitHub workflow. This
+   needs the GitHub command-line tool (`gh`), signed in:
+
+   ```bash
+   gh attestation verify <file> --repo IRKillRoyDev/va-stack
+   ```
+
+   It should report that verification succeeded. `IRKillRoyDev` is the
+   repository owner's GitHub account name.
+
+If a fingerprint does not match or the check fails, do not open the file.
+Matching fingerprints show the file was not changed after it was built. It
+does not prove the program is free of mistakes.
+
 ## Licenses
 
-The windows use PySide6 (Qt for Python) from the official `PySide6-Essentials` and `PySide6-Pdf` wheels, licensed under the LGPL v3 (LGPL-3.0-only; GPL-2.0 and GPL-3.0 are also offered). va-stack uses them unmodified: pip installs them into your `.venv` as their own files and va-stack only imports them, so Qt stays dynamically linked and you can swap in your own build of the same version. These wheels need macOS 14 or newer on a Mac, and glibc 2.34 or newer on Linux.
+The windows use PySide6 (Qt for Python) from the official `PySide6-Essentials`
+and `PySide6-Pdf` wheels, licensed under the LGPL v3 (LGPL-3.0-only; GPL-2.0 and
+GPL-3.0 are also offered). va-stack uses them unmodified: pip installs them into
+your `.venv` as their own files and va-stack only imports them, so Qt stays
+dynamically linked and you can swap in your own build of the same version. These
+wheels need macOS 14 or newer on a Mac, and glibc 2.34 or newer on Linux.
 
 ## Development and tests (CI)
 
@@ -332,4 +406,16 @@ The windows use PySide6 (Qt for Python) from the official `PySide6-Essentials` a
 10. **Lint and tests** (job `python`): `pip install -r requirements-dev.txt` (pinned pypdf, pytest, ruff, flake8), then `ruff check .`, `ruff format --check .`, `flake8 .`, and `pytest -q`. `tests/test_local_search.py` checks redaction of every identifier kind, the per-term and total caps, `--dry-run` counts-only output, in-memory PDF extraction, and that no socket is opened (socket creation is patched to raise). `tests/test_hardening.py` holds the red-team regression tests (redaction before windowing, SSN separator and invisible-character variants, old dates, addresses, phones, redacted terms and file names, line-split identifiers, and the SAFETY/CI wording checks).
 
 
-11. **Install and test on macOS and Windows** (jobs `macos` and `windows`, Python 3.12): the same commands as the Manual install above (`python3 -m venv .venv` and `source .venv/bin/activate` on macOS; `py -m venv .venv` and `.venv\Scripts\Activate.ps1` in PowerShell on Windows; then `python -m pip install -e .`, the encryption check and `va-stack --help`), then `python -m pip install -r requirements-dev.txt`, `python -m pytest -v -s tests/test_encryption.py` (the vault opens encrypted: the encryption check prints a version and the file cannot be read without the passphrase) and `python -m pytest -q -rs`. The PySide6 window tests run there too, without a screen (`QT_QPA_PLATFORM=offscreen`, set in `tests/conftest.py`), and their screenshots are uploaded as `va-stack-shots-macos` and `va-stack-shots-windows`; the `gui-headless` job runs them on Linux under Xvfb and uploads `va-stack-shots`.
+11. **Install and test on macOS and Windows** (jobs `macos` and `windows`,
+    Python 3.12): the same commands as the Manual install above (`python3 -m
+    venv .venv` and `source .venv/bin/activate` on macOS; `py -m venv .venv` and
+    `.venv\Scripts\Activate.ps1` in PowerShell on Windows; then `python -m pip
+    install -e .`, the encryption check and `va-stack --help`), then `python -m
+    pip install -r requirements-dev.txt`, `python -m pytest -v -s
+    tests/test_encryption.py` (the vault opens encrypted: the encryption check
+    prints a version and the file cannot be read without the passphrase) and
+    `python -m pytest -q -rs`. The PySide6 window tests run there too, without a
+    screen (`QT_QPA_PLATFORM=offscreen`, set in `tests/conftest.py`), and their
+    screenshots are uploaded as `va-stack-shots-macos` and
+    `va-stack-shots-windows`; the `gui-headless` job runs them on Linux under
+    Xvfb and uploads `va-stack-shots`.
