@@ -206,3 +206,34 @@ def test_trust_doc_field_map_claims_match_the_consent_prompt():
     ):
         assert claim in prompt, claim
     assert "names of your data points, never their values" in trust
+
+
+def test_trust_doc_states_why_off_list_form_numbers_are_safe():
+    """Off-list form numbers skip blocked_value(); TRUST.md says why."""
+    part = " ".join(
+        _section(
+            TRUST.read_text(encoding="utf-8"), "## Blank forms for your AI bot"
+        ).split()
+    )
+    for needle in (
+        "at most 7 digits",
+        "cannot carry a full SSN or account number",
+        "exact payload",
+    ):
+        assert needle in part, needle
+
+
+def test_trust_doc_says_the_completed_copy_holds_identifiers():
+    """Item 5: the local completed copy is filled with identifiers too."""
+    text = " ".join(TRUST.read_text(encoding="utf-8").split())
+    part = text.split("## Folders and files it writes", 1)[1].split("## ", 1)[0]
+    assert "Your SSN and other identifiers are never filled in" not in part
+    for needle in (
+        "completed.pdf",
+        "your SSN, VA file number and other identifiers from the vault are"
+        " filled in",
+        "no DRAFT mark",
+        "not encrypted",
+        "Drafts never hold them",
+    ):
+        assert needle in part, needle

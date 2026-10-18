@@ -1,10 +1,12 @@
 """Step B 1-2: the pypdf fill engine and its save rules. Fake data only.
 
 fill_engine.fill_form() fills a fillable form from vault data points with a
-checked field map. It reuses form_fill's conventions: identifiers are never
-filled (identifier_blocklist screen/check; blocklisted fields are emptied),
-the completed copy carries the DRAFT stamp, and the source hash is checked
-before and after. Each map entry names the request's form field it fills
+checked field map. Item 5: identifiers (SSN, VA file number, service
+number, ...) ARE filled in the local completed copy, the user's own form
+kept on their machine, so it is not a DRAFT output and carries no DRAFT
+stamp. They stay out of the bot payload, the consent text, every log, the
+access log and every form_fill draft. The source hash is checked before
+and after. Each map entry names the request's form field it fills
 (the optional "field" key). Files are opened only with mode "xb":
 '<name> fillable.pdf' (a blank fillable copy) goes in the source folder,
 '<name> completed.pdf' in a separate folder (default: the drafts folder),
@@ -203,27 +205,67 @@ def test_fill_fills_text_and_checkbox_from_the_vault(fe, vault, setup):
     assert got["Condition"] == "Tinnitus quorvane fake"
     assert got["ApproxDate"] == "06-2004"
     assert got["Homeless"] not in (None, "/Off", "")
-    assert sorted(res.filled) == ["ApproxDate", "Condition", "Homeless"]
+    assert sorted(res.filled) == ["ApproxDate", "Condition", "Homeless", "SSN"]
 
 
-def test_identifiers_are_never_filled(fe, vault, setup):
+# ---------------- item 5: identifiers fill the local completed copy -------
+SSN = VALUES["ssn"]
+IDENTIFIERS = {
+    "ssn": SSN,
+    "va_file_number": "87654321",
+    "service_number": "SN 7654321",
+}
+
+
+def _forms(value: str) -> list[str]:
+    """The value raw, digits only, and with dashes (3-2-4 for nine digits)."""
+    digits = "".join(ch for ch in value if ch.isdigit())
+    out = {value, digits}
+    if len(digits) == 9:
+        out.add(f"{digits[:3]}-{digits[3:5]}-{digits[5:]}")
+    return sorted(f for f in out if f)
+
+
+def _blobs(data: bytes) -> bytes:
+    """The PDF bytes plus every stream decompressed."""
+    import zlib
+
+    parts = [data]
+    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
+        try:
+            parts.append(zlib.decompress(m.group(1)))
+        except zlib.error:
+            pass
+    return b"\n".join(parts)
+
+
+def _absent(value: str, blob) -> None:
+    for form in _forms(value):
+        if isinstance(blob, bytes):
+            for enc in (form.encode(), form.encode("utf-16-be")):
+                assert enc not in blob, form
+        else:
+            assert form not in blob, form
+
+
+def test_identifiers_fill_the_local_completed_copy(fe, vault, setup):
     src, req, raw, out = setup
     res = fe.fill_form(vault, src, raw, req, bot_id=BOT, completed_dir=out)
-    data = res.completed_path.read_bytes()
-    assert _values(data)["SSN"] in (None, "")
-    assert res.blanked.get("SSN") == "SSN"
-    assert b"123-45-6789" not in data
-    assert "123-45-6789" not in repr(res)
+    assert _values(res.completed_path.read_bytes())["SSN"] == SSN
+    assert "SSN" in res.filled
+    assert not hasattr(res, "blanked")
+    assert SSN not in repr(res)
 
 
-def test_completed_copy_has_the_draft_stamp_and_hashes(fe, vault, setup):
+def test_completed_copy_is_not_a_draft_and_has_hashes(fe, vault, setup):
     from pypdf import PdfReader
 
     src, req, raw, out = setup
     res = fe.fill_form(vault, src, raw, req, bot_id=BOT, completed_dir=out)
     data = res.completed_path.read_bytes()
-    text = PdfReader(io.BytesIO(data)).pages[0].extract_text()
-    assert fe.form_fill.DRAFT_STAMP in text
+    reader = PdfReader(io.BytesIO(data))
+    assert fe.form_fill.DRAFT_STAMP not in reader.pages[0].extract_text()
+    assert (reader.metadata or {}).get("/Title") != fe.form_fill.DRAFT_TITLE
     assert res.completed_sha256 == hashlib.sha256(data).hexdigest()
     assert res.source_sha256 == hashlib.sha256(src.read_bytes()).hexdigest()
     fill = res.fillable_path.read_bytes()
@@ -373,3 +415,68 @@ def test_files_are_opened_with_xb_only(fe):
     assert modes and set(modes) == {"xb"}
     for banned in ("write_bytes", "write_text", '"wb"', '"w"', '"ab"', "os.replace"):
         assert banned not in src, banned
+
+
+# ---------------- item 5: identifiers never leave or reach a log ----------
+def test_fillable_copy_carries_no_values(fe, vault, setup):
+    src, req, raw, out = setup
+    res = fe.fill_form(vault, src, raw, req, bot_id=BOT, completed_dir=out)
+    data = res.fillable_path.read_bytes()
+    assert all(v in (None, "", "/Off") for v in _values(data).values())
+    for value in VALUES.values():
+        if value != "yes":
+            _absent(value, _blobs(data))
+
+
+def test_identifier_stays_out_of_the_bot_payload_and_consent(vault, setup):
+    src, _, _, _ = setup
+    prep = fm.prepare_request(src, form_id="21-0781", names_source=vault, bot_id=BOT)
+    texts = [prep.prompt_text(), fm.CONSENT_PROMPT]
+    prep.answer(True, blank_confirmed=True)
+    texts.append(json.dumps(prep.consent_detail()))
+    payload, data = prep.release()
+    texts.append(json.dumps(payload))
+    assert "ssn" in payload["data_points"]  # the name leaves, never the value
+    for text in texts:
+        _absent(SSN, text)
+    _absent(SSN, _blobs(data))
+
+
+def test_identifier_stays_out_of_app_and_access_logs(fe, vault, setup, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    src, req, raw, out = setup
+    fe.fill_form(vault, src, raw, req, bot_id=BOT, completed_dir=out)
+    _absent(SSN, caplog.text)
+    _absent(SSN, json.dumps(vault.read_log(), ensure_ascii=False))
+
+
+def test_identifier_stays_out_of_draft_output(fe, vault, setup):
+    src, _, _, out = setup
+    res = fe.form_fill.make_draft(
+        vault,
+        src,
+        {"SSN": SSN, "Remarks": SSN, "Condition": "Tinnitus quorvane fake"},
+        bot_id=BOT,
+        out_dir=out,
+    )
+    data = Path(res.path).read_bytes()
+    assert _values(data)["SSN"] in (None, "")
+    _absent(SSN, _blobs(data))
+    _absent(SSN, repr(res))
+
+
+def test_master_data_masks_identifiers_by_default(vault):
+    md = _load("master_data")
+    for name, value in IDENTIFIERS.items():
+        if name not in vault.data_point_values([name], BOT):
+            vault.set_data_point(name, value, bot_id=BOT)
+    model = md.MasterData(vault, bot_id=BOT)
+    entries = {e.name: e for tab in model.tabs().values() for e in tab}
+    for name, value in IDENTIFIERS.items():
+        entry = entries[name]
+        assert entry.sensitive and entry.masked and entry.display == md.MASK
+    shown = repr(model.tabs())
+    for value in IDENTIFIERS.values():
+        _absent(value, shown)
