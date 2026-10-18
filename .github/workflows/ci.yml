@@ -183,6 +183,7 @@ jobs:
           .venv/bin/python tests/ci_vault_hash.py create "$state"
           bash setup.sh --no-launch
           .venv/bin/python tests/ci_vault_hash.py check "$state"
+          .venv/bin/python -c "import PySide6.QtPdfWidgets; print('PySide6 ok')"
       - name: Setup twice keeps the vault (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -196,6 +197,8 @@ jobs:
           .\setup.ps1 -NoLaunch
           if ($LASTEXITCODE -ne 0) { exit 1 }
           .venv\Scripts\python.exe tests\ci_vault_hash.py check $state
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .venv\Scripts\python.exe -c "import PySide6.QtPdfWidgets; print('PySide6 ok')"
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Pytest setup-twice test (scratch copy, isolated per-user folder)
         shell: bash

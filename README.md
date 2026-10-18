@@ -311,6 +311,10 @@ Each command shows the consent-to-share notice, then prompts for the password lo
 - Your original form is never changed (it is checked by hash). Each draft is a new file in the `drafts` folder inside your vault folder: `form-draft.pdf`, then `form-draft-2.pdf`, and so on. Nothing is replaced.
 - Drafts are ordinary PDF files, not encrypted. Delete them when you are done.
 
+## Licenses
+
+The windows use PySide6 (Qt for Python) from the official `PySide6-Essentials` and `PySide6-Pdf` wheels, licensed under the LGPL v3 (LGPL-3.0-only; GPL-2.0 and GPL-3.0 are also offered). va-stack uses them unmodified: pip installs them into your `.venv` as their own files and va-stack only imports them, so Qt stays dynamically linked and you can swap in your own build of the same version. These wheels need macOS 14 or newer on a Mac, and glibc 2.34 or newer on Linux.
+
 ## Development and tests (CI)
 
 `.github/workflows/ci.yml` runs on every push, pull request, and manual dispatch. Its steps:
