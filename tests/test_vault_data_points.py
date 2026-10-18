@@ -143,7 +143,7 @@ def test_access_log_holds_keyed_hashes_not_names_or_values(filled):
     text, entries = _log_text(filled)
     for name, value in VALUES.items():
         assert value not in text
-        assert f'"{name}"' not in text and f"\\u0022{name}" not in text
+        assert name not in text  # not even inside an escaped JSON string
     sets = [e for e in entries if e["action"] == "data_point_set"]
     reads = [e for e in entries if e["action"] == "data_point_names"]
     assert len(sets) == len(VALUES) and len(reads) == 1

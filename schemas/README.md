@@ -15,8 +15,8 @@ computer.
 The schema (JSON Schema Draft 2020-12, local `$ref` only) has two shapes:
 
 - **Request (out):** `schema_version`, `kind` = `field_map_request`, `form`
-  (`id`, `name`, `sha256`, `page_count`, `page_sizes`) and `data_points` (a
-  list of names).
+  (`id`, `name`, `sha256`, `page_count`, `page_sizes` in whole points) and
+  `data_points` (a list of names).
 - **Field map (in):** `schema_version`, `kind` = `field_map`, `form_sha256`,
   `fields` (each with `page`, `rect` in PDF points, `type` of text, checkbox
   or date, `data_point`, and an optional short `label`, `format`, `comb` and
@@ -48,10 +48,15 @@ The schema repeats the names as an enum. After editing the list, run
 tests and `scripts/field_map.py` refuse a schema that has drifted.
 
 `scripts/field_map.py` adds the rules a schema cannot hold: names only,
-never values. Names must be in the list, and form ids, form names and
-labels are refused when they look like a value (an identifier, a date or
-long free text). `build_request()` is the only way to make a request, and
-it asks the vault for names only. `parse_field_map()` checks a returned map
+never values. Names must be in the list. The form id must be a form in
+`skills/proposed-issues/forms.json` and the form name its title there.
+Labels are refused when they look like a value (an identifier, a date,
+long free text or a labeled name). `prepare_request()` is the only way to
+make a request: it asks the vault for names only, makes a sanitized copy of
+the blank form, and takes the hash, page count and page sizes from that
+copy. `check_outbound()` recomputes them from the exact bytes that leave,
+and nothing is released before the user says yes (see
+[TRUST.md](../TRUST.md)). `parse_field_map()` checks a returned map
 against the request it answers: pages, boxes, field types and data points.
 Its `missing` list must be exactly the mapped names the request did not
 hold, and one data point may fill at most 4 boxes.

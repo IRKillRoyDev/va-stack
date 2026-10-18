@@ -250,16 +250,12 @@ def test_check_outbound_rejects_other_bytes(fm, sent):
         fm.check_outbound(payload, bytearray(data))  # bytes only
 
 
-def test_check_outbound_rejects_unsanitized_bytes_even_with_their_hash(fm, sent):
+def test_check_outbound_rejects_unsanitized_bytes_even_with_their_hash(
+    fm, sent, tmp_path
+):
     payload, data = sent
     bad = copy.deepcopy(payload)
-    from pypdf import PdfWriter
-
-    writer = PdfWriter(clone_from=io.BytesIO(data))
-    writer.add_metadata({"/Author": "Jane Fakename"})
-    buf = io.BytesIO()
-    writer.write(buf)
-    other = buf.getvalue()
+    other = (tmp_path / "f.pdf").read_bytes()  # the original, with its /Info
     bad["form"]["sha256"] = hashlib.sha256(other).hexdigest()
     with pytest.raises(fm.FieldMapError):
         fm.check_outbound(bad, other)
@@ -360,7 +356,7 @@ def test_incremental_update_leaves_one_revision(fm, tmp_path):
     from pypdf import PdfWriter
 
     pdf = _flat(tmp_path / "f.pdf", lines=("Fictional blank form",))
-    writer = PdfWriter(clone_from=str(pdf), incremental=True)
+    writer = PdfWriter(str(pdf), incremental=True)
     writer.add_metadata({"/Subject": "Jane Fakename revision"})
     with open(pdf, "wb") as fh:
         writer.write(fh)
@@ -567,9 +563,14 @@ def test_template_page_text_matches_without_a_template_warning(fm, tmp_path):
             encoding="utf-8"
         )
     )
-    words = fixture["pages"][0].split()[:12]
-    pdf = _flat(tmp_path / "f.pdf", lines=(" ".join(words[:6]), " ".join(words[6:])))
-    prep = _prepare(fm, pdf, form_id="10182")
+    c = _canvas(tmp_path / "f.pdf")
+    for page in fixture["pages"]:
+        words = page.split()[:12]
+        c.drawString(72, 740, " ".join(words[:6]))
+        c.drawString(72, 726, " ".join(words[6:]))
+        c.showPage()
+    c.save()
+    prep = _prepare(fm, tmp_path / "f.pdf", form_id="10182")
     assert not any("template" in w for w in prep.warnings)
 
 
@@ -649,7 +650,7 @@ def test_prompt_names_what_leaves_and_what_never_does(fm, tmp_path):
 def test_terminal_consent_refuses_without_a_terminal(fm, tmp_path):
     prep = _prepare(fm, _fillable(tmp_path / "f.pdf"))
     asked = []
-    ok = fm.ask_send_consent(
+    ok = fm.ask_consent(
         prep, input_fn=lambda q: asked.append(q) or "yes", is_terminal=lambda: False
     )
     assert ok is False and asked == []
@@ -675,7 +676,7 @@ def test_terminal_consent_needs_typed_yes(fm, tmp_path, answers, flat, released)
     prep = _prepare(fm, pdf)
     feed = iter(answers)
     shown = []
-    ok = fm.ask_send_consent(
+    ok = fm.ask_consent(
         prep,
         input_fn=lambda q: next(feed),
         print_fn=shown.append,

@@ -1203,9 +1203,13 @@ def test_b3_lone_surrogate_in_text_is_a_field_map_error(fm, request_, where):
     assert "\ud800" not in str(err.value)
 
 
-def test_b3_lone_surrogate_in_outbound_text_is_a_field_map_error(fm, form_pdf):
+def test_b3_lone_surrogate_in_outbound_text_is_a_field_map_error(fm, sent_, form_pdf):
     with pytest.raises(fm.FieldMapError):
-        _build(fm, form_pdf, "21-526EZ", NamesOnly(REQUESTED))[0]
+        _build(fm, form_pdf, "21-526EZ\ud800", NamesOnly(REQUESTED))
+    bad = copy.deepcopy(sent_[0])
+    bad["form"]["name"] = "Fictional \ud800 form"
+    with pytest.raises(fm.FieldMapError):
+        fm.check_outbound(bad, sent_[1])
 
 
 # ---------------- Defense Part B, B4: empty answers and a placement cap ------
