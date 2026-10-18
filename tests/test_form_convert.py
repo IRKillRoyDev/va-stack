@@ -142,14 +142,14 @@ def _rotate(path, degrees):
     return path
 
 
-def _request(fm, src, *, record=True):
+def _request(fm, src):
     names = ("approx_date", "condition", "currently_homeless")
     prep = fm.prepare_request(
         src,
         form_id="21-0781",
         names_source=_Names(names),
         bot_id=BOT,
-        ledger=_ledger() if record else None,
+        ledger=_ledger(),
     )
     prep.answer(True, blank_confirmed=True)
     return prep.release()[0]
@@ -469,12 +469,43 @@ def test_a_map_for_an_older_request_of_the_same_form_is_refused(fc, case):
     assert fc.convert(src, _map(newer, ENTRIES), newer, ask=_yes).fields
 
 
-def test_a_request_that_was_never_recorded_is_refused(fc, tmp_path):
+def test_a_request_that_was_never_released_is_refused(fc, tmp_path):
     forms = tmp_path / "forms"
     forms.mkdir()
     src = _flat_form(forms / "claim form.pdf")
-    req = _request(fc.field_map, src, record=False)
-    _no_write_no_ask(fc, src, _map(req, ENTRIES), req)
+    prep = fc.field_map.prepare_request(
+        src, form_id="21-0781", names_source=_Names(("condition",)), bot_id=BOT
+    )
+    req = prep.request  # shown, never released, so never recorded
+    _no_write_no_ask(fc, src, _map(req, ENTRIES[:1]), req)
+
+
+def test_release_records_in_the_default_ledger_without_an_argument(fc, tmp_path):
+    forms = tmp_path / "forms"
+    forms.mkdir()
+    src = _flat_form(forms / "claim form.pdf")
+    prep = fc.field_map.prepare_request(
+        src, form_id="21-0781", names_source=_Names(("condition",)), bot_id=BOT
+    )
+    prep.answer(True, blank_confirmed=True)
+    payload, _ = prep.release()
+    led = _ledger()
+    assert led.path.is_relative_to(tmp_path)
+    assert led.request_id(_sha(src)) == payload["form"]["sha256"]
+
+
+def test_a_map_for_a_request_released_without_a_ledger_argument_converts(fc, tmp_path):
+    forms = tmp_path / "forms"
+    forms.mkdir()
+    src = _flat_form(forms / "claim form.pdf")
+    prep = fc.field_map.prepare_request(
+        src, form_id="21-0781", names_source=_Names(("condition",)), bot_id=BOT
+    )
+    prep.answer(True, blank_confirmed=True)
+    req = prep.release()[0]
+    assert fc.convert(src, _map(req, ENTRIES[:1]), req, ask=_yes).fields == [
+        "condition"
+    ]
 
 
 def test_an_id_belonging_to_another_form_is_refused(fc, case, tmp_path):
