@@ -489,14 +489,33 @@ def _long(n):
     }
 
 
+def _best_times(fn, s100, s50, runs=3):
+    """Best of runs for each size, the runs interleaved (100k, 50k, ...).
+
+    One slow run on a busy runner is noise, not the code; interleaving puts
+    the same load drift on both sizes, so the ratio stays honest.
+    """
+    best = [float("inf"), float("inf")]
+    for _ in range(runs):
+        for k, s in enumerate((s100, s50)):
+            t0 = time.perf_counter()
+            fn(s)
+            best[k] = min(best[k], time.perf_counter() - t0)
+    return best[0], best[1]
+
+
+# Timing (round 19, (e)): a 2.5 s budget plus a doubling-ratio check (the
+# 100k time is no more than 2.5x the 50k time), each timed best of 3, as in
+# test_r14_blocklist; a 1.0 s budget flaked on Windows CI (1.0099 s), and a
+# quadratic blowup (about 4x) is still caught.
 @pytest.mark.parametrize("name", sorted(_long(10)))
 def test_timing_100k_inputs_fast(name):
-    s = _long(100_000)[name]
+    s100, s50 = _long(100_000)[name], _long(50_000)[name]
     for fn in (
         bl.blocked_value,
         lambda x: ls.redact(x),
         lambda x: ls.redact(x, keep_dates=True),
     ):
-        t0 = time.perf_counter()
-        fn(s)
-        assert time.perf_counter() - t0 < 1.0, name
+        t100, t50 = _best_times(fn, s100, s50)
+        assert t100 < 2.5, (name, t100)
+        assert t100 <= 2.5 * t50, (name, t100, t50)

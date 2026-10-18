@@ -526,6 +526,10 @@ def test_over_block_delta_reported():
 # ---------------------------------------------------------------------------
 # Linear time at 100k characters (name + birth-date rules).
 # ---------------------------------------------------------------------------
+# Timing (round 19, (e)): a 2.5 s budget plus a doubling-ratio check (the
+# 100k time is no more than 2.5x the 50k time), each timed best of 3, as in
+# test_r14_blocklist; a 1.0 s budget flaked on Windows CI (1.0099 s), and a
+# quadratic blowup (about 4x) is still caught.
 @pytest.mark.parametrize(
     "unit",
     [
@@ -537,12 +541,27 @@ def test_over_block_delta_reported():
 )
 @pytest.mark.parametrize("fn_name", ["redact", "blocked_value"])
 def test_linear_100k_under_1s(unit, fn_name):
-    s = (unit * (100_000 // len(unit) + 1))[:100_000]
+    s100 = (unit * (100_000 // len(unit) + 1))[:100_000]
+    s50 = (unit * (50_000 // len(unit) + 1))[:50_000]
     fn = (lambda x: ls.redact(x)) if fn_name == "redact" else bl.blocked_value
-    t0 = time.perf_counter()
-    fn(s)
-    dt = time.perf_counter() - t0
-    assert dt < 1.0, f"{fn_name} {dt:.2f}s on {unit!r}"
+    t100, t50 = _best_times(fn, s100, s50)
+    assert t100 < 2.5, f"{fn_name} {t100:.2f}s on {unit!r}"
+    assert t100 <= 2.5 * t50, f"{fn_name} {t100:.2f}s vs {t50:.2f}s at 50k on {unit!r}"
+
+
+def _best_times(fn, s100, s50, runs=3):
+    """Best of runs for each size, the runs interleaved (100k, 50k, ...).
+
+    One slow run on a busy runner is noise, not the code; interleaving puts
+    the same load drift on both sizes, so the ratio stays honest.
+    """
+    best = [float("inf"), float("inf")]
+    for _ in range(runs):
+        for k, s in enumerate((s100, s50)):
+            t0 = time.perf_counter()
+            fn(s)
+            best[k] = min(best[k], time.perf_counter() - t0)
+    return best[0], best[1]
 
 
 # ---------------------------------------------------------------------------

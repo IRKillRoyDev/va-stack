@@ -233,6 +233,10 @@ def test_g11_cap_boundary():
 
 
 # G12: runtime grows quadratically (flag > 1 s at 100k)
+# Timing (round 19, (e)): a 2.5 s budget plus a doubling-ratio check (the
+# 100k time is no more than 2.5x the 50k time), each timed best of 3, as in
+# test_r14_blocklist; a 1.0 s budget flaked on Windows CI (1.0099 s), and a
+# quadratic blowup (about 4x) is still caught.
 @pytest.mark.parametrize(
     "unit",
     [
@@ -242,11 +246,26 @@ def test_g11_cap_boundary():
     ],
 )
 def test_g12_redact_100k_under_1s(unit):
-    s = (unit * (100_000 // len(unit) + 1))[:100_000]
-    t0 = time.perf_counter()
-    ls.redact(s)
-    dt = time.perf_counter() - t0
-    assert dt < 1.0, f"{dt:.1f}s"
+    s100 = (unit * (100_000 // len(unit) + 1))[:100_000]
+    s50 = (unit * (50_000 // len(unit) + 1))[:50_000]
+    t100, t50 = _best_times(ls.redact, s100, s50)
+    assert t100 < 2.5, f"{t100:.2f}s"
+    assert t100 <= 2.5 * t50, f"{t100:.2f}s vs {t50:.2f}s at 50k"
+
+
+def _best_times(fn, s100, s50, runs=3):
+    """Best of runs for each size, the runs interleaved (100k, 50k, ...).
+
+    One slow run on a busy runner is noise, not the code; interleaving puts
+    the same load drift on both sizes, so the ratio stays honest.
+    """
+    best = [float("inf"), float("inf")]
+    for _ in range(runs):
+        for k, s in enumerate((s100, s50)):
+            t0 = time.perf_counter()
+            fn(s)
+            best[k] = min(best[k], time.perf_counter() - t0)
+    return best[0], best[1]
 
 
 # G13: field_map outbound gate trusts the caller
