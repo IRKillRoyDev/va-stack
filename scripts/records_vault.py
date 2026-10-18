@@ -299,6 +299,8 @@ DRAFT_MAX = 1_000_000
 USER_UPDATED = "USER_UPDATED"
 REVIEW_ANSWERS = ("yes", "no")
 ROW_ID_MAX = 128
+# Domain prefix for field-value HMACs (old_value_hmac / new_value_hmac).
+FIELD_MAC_PREFIX = "field-value\x1f"
 # Citation checks allowed per unlock session; after that the check fails
 # closed (unlock again). Keeps the check from working as a guessing oracle.
 QUOTE_CHECK_LIMIT = 50
@@ -828,14 +830,23 @@ class Vault:
             {
                 "field": field,
                 "row_id": row_id,
-                "old_value_hmac": self._mac(str(item.get("old") or "")),
-                "new_value_hmac": self._mac(str(item.get("new") or "")),
+                "old_value_hmac": self._field_mac(item.get("old")),
+                "new_value_hmac": self._field_mac(item.get("new")),
                 "changed_by_user": bool(item.get("changed")),
                 "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "page_ref": item["link"],
                 "page_fingerprint": self.page_fingerprint(item["link"]),
             },
         )
+
+    def _field_mac(self, value) -> str:
+        """Keyed HMAC of one field value, domain-separated from other MACs.
+
+        When to use: for old_value_hmac / new_value_hmac in field log entries,
+        so a field value's MAC never equals the MAC of the same text logged
+        as a quote check, search term or snippet.
+        """
+        return self._mac(FIELD_MAC_PREFIX + str(value or ""))
 
     def page_fingerprint(self, link: str) -> str:
         """Keyed HMAC of one stored record page (the source-page fingerprint).

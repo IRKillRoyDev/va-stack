@@ -200,6 +200,16 @@ class _NameRule:
 
 _NAME_RULE = _NameRule()
 
+# Labeled service and bank numbers: digits may be grouped by 0-3 characters
+# that are not letters, digits or line breaks ("000, 123, 456, 789",
+# "0001 / 2345 / 6789", "1234|5678"), and a few filler words may sit between
+# the label and the number ("account number is ...", "account ending in ...").
+_GROUP_SEP = r"[^\dA-Za-z\r\n]{0,3}"
+_FILLER = (
+    r"(?:[\s:#.=-]*(?:(?:number|num|nbr|no|is|was)\b\.?"
+    r"|(?:ending|ends)(?:\s+(?:in|with))?\b|#)){0,4}"
+)
+
 # Order matters: labeled identifiers first, then generic number shapes.
 REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
@@ -267,8 +277,9 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         # digits (RA12345678 style).
         "SERVICE_NUMBER",
         re.compile(
-            r"(?P<lbl>\b(?:service|serial|svc)\s*(?:number|num|no\.?|#)[\s:#.-]*)"
-            r"[A-Z]{0,3}[\s._/,-]?\d(?:[\s._/,-]?\d){5,8}(?!\d)",
+            rf"(?P<lbl>\b(?:service|serial|svc)\s*(?:number|num|no\.?|#){_FILLER}"
+            r"[\s:#.=-]*)"
+            rf"[A-Z]{{0,3}}{_GROUP_SEP}\d(?:{_GROUP_SEP}\d){{5,8}}(?!\d)",
             re.IGNORECASE,
         ),
     ),
@@ -277,9 +288,8 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
         # Labeled bank routing and account numbers (6 to 17 digits).
         "BANK",
         re.compile(
-            r"(?P<lbl>\b(?:routing|aba|account|acct)"
-            r"(?:\s*(?:number|num|no\.?|#))?[\s:#.-]*)"
-            r"\d(?:[\s._/,-]?\d){5,16}(?!\d)",
+            rf"(?P<lbl>\b(?:routing|aba|account|acct){_FILLER}[\s:#.=-]*)"
+            rf"\d(?:{_GROUP_SEP}\d){{5,16}}(?!\d)",
             re.IGNORECASE,
         ),
     ),
