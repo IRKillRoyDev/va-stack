@@ -200,11 +200,15 @@ class _NameRule:
 
 _NAME_RULE = _NameRule()
 
-# Labeled service and bank numbers: digits may be grouped by 0-3 characters
-# that are not letters, digits or line breaks ("000, 123, 456, 789",
-# "0001 / 2345 / 6789", "1234|5678"), and a few filler words may sit between
-# the label and the number ("account number is ...", "account ending in ...").
-_GROUP_SEP = r"[^\dA-Za-z\r\n]{0,3}"
+# Labeled service and bank numbers: digit groups may be split by any amount
+# of spaces or tabs on one line with up to 8 other non-alphanumeric
+# characters among them ("000, 123, 456, 789", "0001    2345    6789",
+# "0001 -- / 2345 -- / 6789", "1234|5678"; not letters or line breaks), and a
+# few filler words may sit between the label and the number ("account number
+# is ...", "account ending in ..."). Each punctuation mark is followed by its
+# own spaces, so the gap matches in one way only and stays linear.
+_HSPACE = r"[^\S\n\r\v\f\x1c-\x1e\x85\u2028\u2029]"
+_GROUP_SEP = rf"{_HSPACE}*(?:[^\dA-Za-z\s]{_HSPACE}*){{0,8}}"
 _FILLER = (
     r"(?:[\s:#.=-]*(?:(?:number|num|nbr|no|is|was)\b\.?"
     r"|(?:ending|ends)(?:\s+(?:in|with))?\b|#)){0,4}"
@@ -214,7 +218,9 @@ _FILLER = (
 REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
     (
         "EMAIL",
-        re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"),
+        # Start only where a run of address characters starts, so a long run
+        # with no "@" is scanned once, not once per word boundary inside it.
+        re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"),
     ),
     (
         # Medicare Beneficiary Identifier: 11 characters, positions
@@ -302,7 +308,8 @@ REDACTIONS: list[tuple[str, re.Pattern[str]]] = [
             r"|Parkway|Pkwy)\b\.?"
             r"(?:,?\s+(?:Apt|Suite|Unit|#)\s*\w+)?"
             r"|\bP\.?\s?O\.?\s*Box\s*\d+"
-            r"|\b(?:RR|Rural Route)\s*\d+(?:\s+Box\s*\d+)?",
+            # "RR 2 Box 15"; a bare "RR 16" is a respiratory rate
+            r"|\bRural\s+Route\s*\d+(?:\s+Box\s*\d+)?|\bRR\s*\d+\s+Box\s*\d+",
             re.IGNORECASE,
         ),
     ),

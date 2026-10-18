@@ -314,7 +314,18 @@ Each command shows the consent-to-share notice, then prompts for the password lo
 `scripts/form_fill.py` makes a pre-filled DRAFT copy of a PDF form for you to check and finish by hand. It never submits or sends anything, and it has no network code. It runs only while your vault is unlocked, and it writes each draft to the vault's access log (counts and a file hash, no answers).
 
 - Fillable forms (with typing boxes) are filled with pypdf. Flat forms get the text printed on top with reportlab, at positions you give.
-- These are always left blank, whatever the box is called and whatever is typed: Social Security number, address, phone, date of birth, service number, VA file number, and bank routing or account numbers (plus email). The list is in `scripts/identifier_blocklist.py`. Fill those in yourself.
+- These are left blank whenever the box's name or the typed value looks like one
+  of them: Social Security number, address, phone, date of birth, service
+  number, VA file number, and bank routing or account numbers (plus email). The
+  list is in `scripts/identifier_blocklist.py`. Fill those in yourself. Values
+  are checked by pattern, so there are limits: a number is caught when its digit
+  groups are split by spaces or tabs (any amount, on one line) with up to eight
+  punctuation marks, or by one line break. Digits split by letters
+  (`0001a2345a6789`) or by nine or more punctuation marks are not caught, and an
+  unlabeled number of eight digits or fewer split by a slash, comma or similar
+  mark (such as `0001/2345`) is allowed. Some ordinary numbers are left blank
+  too (for example `vitals 120 80 72 98`, a bare 11-digit NDC, or
+  `reference number 1234567`). Read every draft before you use it.
 - Your original form is never changed (it is checked by hash). Each draft is a new file in the `drafts` folder inside your vault folder: `form-draft.pdf`, then `form-draft-2.pdf`, and so on. Nothing is replaced.
 - Drafts are ordinary PDF files, not encrypted. Delete them when you are done.
 

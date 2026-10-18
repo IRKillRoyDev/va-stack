@@ -11,11 +11,13 @@ splitting camelCase and dropping punctuation, so "S.S.N.", "Veteran_SSN[0]",
 "SOCIAL  SECURITY  NO" and "form1[0].#subform[0].DateOfBirth[0]" all match.
 Values are matched with the local_search redaction patterns plus a few more
 (labeled ZIP codes, any run of seven or more digits joined by spaces,
-dots or dashes, and any run of nine or more digits joined by up to three
-non-alphanumeric characters, e.g. "0001/2345/6789", "000, 123, 456, 789"
-or "0001 / 2345 / 6789"). The lists lean
-toward leaving a field blank: a blank field is something the user fills in
-by hand; a wrong fill is a leak.
+dots or dashes, and any run of nine or more digits whose groups are split
+by any amount of spaces or tabs on one line plus up to eight punctuation
+characters, or by one line break, e.g. "0001/2345/6789",
+"000, 123, 456, 789", "0001    2345    6789" or "0001 -- / 2345 -- / 6789").
+Digits split by letters ("0001a2345a6789") or by nine or more punctuation
+characters are not caught. The lists lean toward leaving a field blank: a
+blank field is something the user fills in by hand; a wrong fill is a leak.
 
 When to use: before writing any value into any form draft.
 """
@@ -158,17 +160,26 @@ _ZIP = re.compile(
 )
 # A digit run may be split by any common separator. Runs that use only
 # space, dot or dash count from 7 digits (as before). Wider runs count from
-# 9 digits: digits joined by 0-3 characters that are not letters, digits or
-# line breaks ("000, 123, 456, 789", "0001 / 2345 / 6789", "0001|2345|6789"),
-# or by one line break. Such a run is left alone only when it splits into
-# pieces that are each a known non-identifier: a rating list, a percent, a
-# labeled diagnostic code list, a $ amount, a calendar date or a year. Pieces
+# 9 digits: digits joined by one gap, where a gap is any amount of spaces or
+# tabs on one line with up to 8 other non-alphanumeric characters among them
+# ("000, 123, 456, 789", "0001    2345    6789", "0001 -- / 2345 -- / 6789",
+# "0001......2345"), or one line break. Such a run is left alone only when it
+# splits into pieces that are each a known non-identifier: a rating list, a
+# percent, a labeled diagnostic code list, a labeled CPT code list, a labeled
+# dashed NDC, a $ amount, a calendar date or a year. Pieces
 # are checked against the original text, two pieces of one kind may not sit
 # side by side (dates and years may, in a spaced list), and each kind is
 # capped, so the exceptions cannot carry an account number
 # ("$ 100,123,456,789", "DC 5257/6260/7000/8000").
 _DIGIT_RUN = re.compile(r"(?<!\d)\d(?:[ .-]?\d){6,}(?!\d)")
-_WIDE_SEP = r"(?:[^\dA-Za-z\r\n]{0,3}|\r?\n)"
+_HSPACE = r"[^\S\n\r\v\f\x1c-\x1e\x85\u2028\u2029]"  # whitespace, one line
+_LINE_BREAK = r"(?:\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029])"
+_PUNCT = r"[^\dA-Za-z\s]"
+_PUNCT_MAX = 8
+# Each punctuation mark is followed by its own spaces, so the gap matches in
+# one way only and the search stays linear in the input length.
+_GAP = rf"{_HSPACE}*(?:{_PUNCT}{_HSPACE}*){{0,{_PUNCT_MAX}}}"
+_WIDE_SEP = rf"(?:{_GAP}|{_LINE_BREAK})"
 _WIDE_DIGIT_RUN = re.compile(rf"(?<!\d)\d(?:{_WIDE_SEP}\d){{8,}}(?!\d)")
 _RATING = r"(?:100|[1-9]0)"
 _RATING_LIST = re.compile(rf"{_RATING}(?:/{_RATING}){{2,4}}")  # at most 5
@@ -186,6 +197,18 @@ _DATE = re.compile(
     r"|(?:19|20)\d\d-(?:0?[1-9]|1[0-2])-(?:0?[1-9]|[12]\d|3[01])"
 )
 _YEAR = re.compile(r"(?:19|20)\d\d")
+# CPT/HCPCS procedure codes are five characters; at most 3, right after a label.
+_CPT_LIST = re.compile(r"\d{5}(?:(?:\s*[,/]\s*|\s+)\d{5}){0,2}")
+_CPT_LABEL = re.compile(
+    r"\b(?:CPT|HCPCS|(?:procedure|visit|billing)\s+codes?)(?:\s+codes?)?[\s:#]*$",
+    re.IGNORECASE,
+)
+# National Drug Codes in their dashed 10-digit shapes (4-4-2, 5-3-2, 5-4-1)
+# or the 11-digit 5-4-2 billing shape, right after an NDC label. A bare
+# 10/11-digit run is NOT excused: it carries no structure an account lacks.
+_NDC = re.compile(r"\d{4}-\d{4}-\d{2}|\d{5}-\d{3}-\d{2}|\d{5}-\d{4}-\d{1,2}")
+_NDC_LABEL = re.compile(r"\bNDC(?:\s*(?:#|no\.?|number|code))?[\s:#]*$", re.IGNORECASE)
+_LABELED_CODES = frozenset({"cpt", "ndc"})
 _REPEATABLE = frozenset({"date", "year"})  # "seen 03/14/2027, 04/15/2027"
 _MAX_PIECES = 4
 _NOT_AN_ID = re.compile(
@@ -210,6 +233,10 @@ def _piece_kind(text: str, start: int, end: int) -> str | None:
         return "rating"  # "70%"
     if _DC_LIST.fullmatch(piece) and _DC_LABEL.search(before):
         return "dc"  # "DC 5260/5003/5010"
+    if _CPT_LIST.fullmatch(piece) and _CPT_LABEL.search(before):
+        return "cpt"  # "CPT 99213, 93000"
+    if _NDC.fullmatch(piece) and _NDC_LABEL.search(before):
+        return "ndc"  # "NDC 0071-0155-23"
     if (
         _AMOUNT.fullmatch(piece)
         and re.search(r"\$\s*$", before)
@@ -269,7 +296,12 @@ def blocked_value(value: str) -> str | None:
             return category
     if _ZIP.search(text):
         return "ADDRESS"
-    runs = [m for m in _DIGIT_RUN.finditer(text) if not _NOT_AN_ID.fullmatch(m[0])]
+    runs = [
+        m
+        for m in _DIGIT_RUN.finditer(text)
+        if not _NOT_AN_ID.fullmatch(m[0])
+        and _piece_kind(text, m.start(), m.end()) not in _LABELED_CODES
+    ]
     runs += [m for m in _WIDE_DIGIT_RUN.finditer(text) if not _explained(text, m)]
     if not runs:
         return None
