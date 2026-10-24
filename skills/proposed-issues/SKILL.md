@@ -5,7 +5,17 @@ description: Produce two outputs side by side - the full cited claim report and 
 
 # proposed-issues
 
-Requires: claim-citations rows, condition-map diagnostic codes, and the encrypted vault ([records-vault](../records-vault/SKILL.md)). Run `python3 scripts/proposed_issues.py "<db>" "<input.json>" --bot-id <id>` on the user's computer.
+## PII gate
+
+Do not read record files, vault page text, PDF bytes, or `raw_sentence`. Read only sterilized sentences, stored diagnosis sentences, and Missing Diagnosis text the program already wrote. Do not paste record text into chat, commits, issues, or pull requests. Names without a label are not redacted. If a sentence still shows a name, stop and ask the user to remove it before anything is sent.
+
+Requires: claim-citations rows, condition-map diagnostic codes, and the encrypted vault ([records-vault](../records-vault/SKILL.md)). Run these on the user's computer.
+
+1. Sterilize. `python3 scripts/proposed_issues.py "<db>" --bot-id <id> --sterilize -t "<term>"` redacts every matching sentence and stores that packet in the vault. Read only that packet. Do not read the record files.
+2. Project. From those sentences only, write the input JSON (condition, basis, diagnostic code, findings, and evidence quotes copied from the packet).
+3. Store. `python3 scripts/proposed_issues.py "<db>" "<input.json>" --bot-id <id> --save` refuses a quote that is not in the stored packet, builds the estimate, and writes the proposal into the vault.
+
+Or review by confidence instead of searching terms: `python3 scripts/proposed_issues.py "<db>" --bot-id <id> --criteria`. The window lists record sentences scored against the fetched schedule. The right pane shows that page. A PDF highlights the sentence; a text record marks it in the page. A sentence that clearly states a diagnosis (it says diagnosis, diagnosed, dx, impression, or assessment, and it names the condition) is added to the vault automatically. Other matches are findings. Their confidence score comes from the sentence structure and the rest of the page (a reported symptom, an exam measurement, clinical headings), not from calling the finding a diagnosis. Findings whose code has no clear diagnosis are listed under Missing Diagnosis, with the program's statement of what the file still needs for that finding to be used in a claim: a current diagnosis written by a provider, an in-service event, injury, or exposure, and a medical opinion connecting them. Read that text to the user. Do not supply a diagnosis the records do not state. A finding cannot be selected for sanitization until the user agrees it meets the criterion.
 
 ## Outputs (both, always)
 
@@ -45,6 +55,19 @@ Section V of VA Form 21-526EZ asks for the approximate date a disability began o
 1. The user reruns the search with `--keep-dates` and reviews the snippets.
 2. Dates near a birth label (DOB, born, birthday, and similar) stay redacted in every mode, including `--keep-dates`.
 3. Enter approximate dates as month and year (MM-YYYY), only from snippets the user has confirmed.
+
+## Diagnostic codes come from the fetched schedule
+
+`scripts/schedule_catalog.py` reads every diagnostic code in the fetched Part 4 section text. Tests use `tests/fixtures/ecfr-part4-ratings-2026-10-14.json`. A live session passes the cfr-fetch file as `ecfr_file` in the input JSON (same shape: `as_of` and `sections`). The report names the code, the section, the as-of date, and the verbatim schedule line. A code that is not in that text is not given a rating.
+
+A percentage is produced in only two ways:
+
+1. The schedule line states exactly one rating, and the words of that line appear in a cited quote. A graded list, a major/minor pair, a "rate as" or "evaluate under" instruction, and a rating the text limits to a period of months or a year are not turned into a number.
+2. A structured model in `rating-criteria.json` whose every cite is a whole clause of the fetched section (`check_criteria`). That is how a formula such as the skin formula or the spine formula is estimated. If a code has no such model, the report quotes the schedule and says `insufficient evidence to estimate`. Do not invent the bands. Add a model only by copying clauses out of the fetched text. The build refuses a cite that is not a whole clause of that text. After adding a model, update the manifest hash in `scripts/proposed_issues.py`.
+
+Findings are used only when the value appears in a cited quote. A number that the quote does not contain is left out of the estimate.
+
+`bilateral_pairs` is a list of pairs, such as `[[10, 10]]`. Those ratings are removed from the issue estimates and replaced by the §4.26 bilateral value. They are not added on top.
 
 ## Estimate per issue
 

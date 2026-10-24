@@ -221,6 +221,101 @@ def test_bilateral_case_from_4_26_example():
     assert res["combined_value"] == 74 and res["final"] == 70
 
 
+def test_schedule_loads_codes_from_the_ecfr_text():
+    catalog = pi.schedule_catalog.parse_schedule(pi.load_ecfr())
+    assert len(catalog) > 150
+    assert catalog["6260"]["kind"] == "single" and catalog["6260"]["rating"] == 10
+    assert catalog["5259"]["kind"] == "single" and catalog["5259"]["rating"] == 10
+    assert catalog["5012"]["kind"] == "limited"
+    assert catalog["5132"]["kind"] == "graded"
+    assert catalog["5237"]["kind"] == "formula"
+    assert "General Rating Formula" in catalog["5237"]["formula"]
+    assert catalog["7806"]["formula"]
+    assert "7806" in catalog and catalog["7806"]["section"] == "4.118"
+
+
+def test_finding_absent_from_the_quote_is_not_estimated(vault):
+    data = copy.deepcopy(INPUT)
+    data["issues"][0]["findings"] = {
+        "body_area_percent": 60,
+        "treatment": "constant_systemic",
+    }
+    rep = pi.build_report(data, vault, bot_id=BOT)
+    skin = rep["cited_report"][0]
+    assert skin["estimate"] == pi.INSUFFICIENT
+    assert set(skin["findings_not_in_quote"]) == {
+        "body_area_percent",
+        "treatment",
+    }
+
+
+def test_single_schedule_line_uses_the_quote(tmp_path):
+    folder = tmp_path / "recs"
+    folder.mkdir()
+    (folder / "knee.txt").write_text(
+        "Exam: Cartilage, semilunar, dislocated, with frequent episodes of"
+        " locking, pain, and effusion into the joint.\n"
+    )
+    db = tmp_path / "v.db"
+    rv.create_vault(db, bytearray(b"pw fake"), kdf_params=FAST, insecure_test_kdf=True)
+    gate = rv.ConsentGate()
+    gate.acknowledge()
+    vault = rv.Vault.open(db, bytearray(b"pw fake"), gate)
+    vault.ingest_folder(folder, bot_id=BOT)
+    data = {
+        "track": "B1",
+        "issues": [
+            {
+                "condition": "Locked cartilage",
+                "basis": "direct",
+                "approx_date": "06-2004",
+                "dc": "5258",
+                "findings": {},
+                "evidence": [
+                    {
+                        "file": "knee.txt",
+                        "page": 1,
+                        "quote": (
+                            "Exam: Cartilage, semilunar, dislocated, with"
+                            " frequent episodes of locking, pain, and"
+                            " effusion into the joint."
+                        ),
+                    }
+                ],
+            }
+        ],
+    }
+    try:
+        rep = pi.build_report(data, vault, bot_id=BOT)
+    finally:
+        vault.close()
+    row = rep["cited_report"][0]
+    assert row["estimate"] == 20
+    assert row["rating_wording"]["schedule_kind"] == "single"
+    assert (
+        row["rating_wording"]["dc_cite"]
+        in (pi.load_ecfr()["sections"]["4.71a"]["text"])
+    )
+
+
+def test_bilateral_pair_is_removed_before_it_is_combined(vault):
+    data = copy.deepcopy(INPUT)
+    data["bilateral_pairs"] = [[30, 10]]
+    rep = pi.build_report(data, vault, bot_id=BOT)
+    once = pi.combine([], bilateral=[30, 10])
+    doubled = pi.combine([30, 10], bilateral=[30, 10])
+    assert rep["combined"]["order"] == once["order"]
+    assert rep["combined"]["final"] == once["final"]
+    assert rep["combined"]["order"] != doubled["order"]
+
+
+def test_bilateral_pair_must_match_an_issue_estimate(vault):
+    data = copy.deepcopy(INPUT)
+    data["bilateral_pairs"] = [[10, 10]]
+    with pytest.raises(ValueError, match="bilateral rating"):
+        pi.build_report(data, vault, bot_id=BOT)
+
+
 def test_report_combined_block(report):
     comb = report["combined"]
     assert comb["ratings"] == [30, 10]

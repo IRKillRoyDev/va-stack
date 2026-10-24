@@ -35,6 +35,14 @@ jobs:
           done
           OVERCLAIM="HIPAA[- ]?compliant|zero retention|zero-retention|zero data retention|records stay local|never send records to an external service|anonymized|anonymised|de-identified|de identified|deidentified|fully private|completely private|100% private|no data leaves your computer|records never leave your computer|data stays on your device|nothing leaves your machine|HIPAAcompliant|stays? on your (computer|device|machine)|never leaves? your (computer|device|machine)|HIPAA[- ]?complian|zero[- ]?(data[- ]?)?retention|fully[- ]?private|100 ?(%|percent) private|\bde[- ]?identif|\bon[- ]device|never leaves? (the|this|your) [a-z]+|per ?cent private|entirely local"
           bash tests/overclaim_scan.sh "$OVERCLAIM"
+      - name: PII gate present
+        run: |
+          files="SAFETY.md agents/va-claims.md skills/local-search/SKILL.md skills/records-vault/SKILL.md skills/records-intake/SKILL.md skills/condition-map/SKILL.md skills/claim-citations/SKILL.md skills/related-gaps/SKILL.md skills/proposed-issues/SKILL.md"
+          for f in $files; do
+            for s in "PII gate" "Do not read record files" "sterilized sentences" "Do not paste record text into chat, commits, issues, or pull requests" "Names without a label"; do
+              grep -qF "$s" "$f" || { echo "$f missing: $s"; exit 1; }
+            done
+          done
       - name: Estimate notice present
         run: |
           N="Unofficial estimate, not a VA decision. It is likely to differ after the VA exam (C&P exam). Confirm with a VA-accredited representative."

@@ -5,6 +5,10 @@ description: Identify related or secondary conditions (via §3.310 and links doc
 
 # related-gaps
 
+## PII gate
+
+Do not read record files, vault page text, PDF bytes, or `raw_sentence`. Read only sterilized sentences, stored diagnosis sentences, and Missing Diagnosis text the program already wrote. Do not paste record text into chat, commits, issues, or pull requests. Names without a label are not redacted. If a sentence still shows a name, stop and ask the user to remove it before anything is sent.
+
 ## Steps
 
 1. Start from claim-citations rows (the possible primary conditions).

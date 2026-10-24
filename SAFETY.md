@@ -1,5 +1,6 @@
 # Safety
 
+- **PII gate.** Do not read record files, vault page text, PDF bytes, or `raw_sentence`. Read only sterilized sentences, stored diagnosis sentences, and Missing Diagnosis text the program already wrote. Do not paste record text into chat, commits, issues, or pull requests. Names without a label are not redacted. If a sentence still shows a name, stop and ask the user to remove it before anything is sent.
 - **Not legal or medical advice.** This project produces organized research notes only. It does not decide entitlement or diagnose anything. Any rating estimate is unofficial and always carries this notice: Unofficial estimate, not a VA decision. It is likely to differ after the VA exam (C&P exam). Confirm with a VA-accredited representative. Gap analysis never suggests worsening a condition or seeking care for the sake of a rating.
 - **Verify with an accredited professional.** Before acting on any output, review it with a VA-accredited representative, a Veterans Service Organization (VSO), or a VA-accredited attorney or claims agent. Accreditation can be checked at https://www.va.gov/ogc/apps/accreditation/.
 - **No filing.** The bot never submits, files, signs, or transmits a claim, form, or document to VA or anyone else. The user decides what, if anything, to file.
