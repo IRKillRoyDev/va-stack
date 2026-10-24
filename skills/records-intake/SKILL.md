@@ -5,7 +5,11 @@ description: Ingest a veteran's medical and service records only from a local pr
 
 # records-intake
 
-Requires: an approved snippet list from [local-search](../local-search/SKILL.md), or from [records-vault](../records-vault/SKILL.md) when the user keeps records in the encrypted vault (consent screen every unlock, bot id on every request, access log). Work from those snippets first.
+## PII gate
+
+Do not read record files, vault page text, PDF bytes, or `raw_sentence`. Read only sterilized sentences, stored diagnosis sentences, and Missing Diagnosis text the program already wrote. Do not paste record text into chat, commits, issues, or pull requests. Names without a label are not redacted. If a sentence still shows a name, stop and ask the user to remove it before anything is sent.
+
+Requires: sterilized sentences from [local-search](../local-search/SKILL.md) or [records-vault](../records-vault/SKILL.md). Work from those sentences. Do not open the record files.
 
 ## Steps
 
@@ -28,7 +32,7 @@ Requires: an approved snippet list from [local-search](../local-search/SKILL.md)
 
 - No approved local-search snippet list → stop. Whole pages only with explicit user approval per page.
 - No folder given, folder unreadable, or folder in a repo/public sync → stop.
-- Never write record files, extractions, or quotes to any location outside the user's folder (no repo, no gist), and quote in chat only what the user needs.
+- Never write record files, extractions, or quotes outside the user's folder. In chat, repeat only a sterilized sentence the user already approved.
 - Never guess dates or diagnoses. Unknown stays unknown.
 
 ## Redaction

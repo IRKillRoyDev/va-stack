@@ -5,6 +5,10 @@ description: Map each diagnosis from records-intake to its 38 CFR Part 4 diagnos
 
 # condition-map
 
+## PII gate
+
+Do not read record files, vault page text, PDF bytes, or `raw_sentence`. Read only sterilized sentences, stored diagnosis sentences, and Missing Diagnosis text the program already wrote. Do not paste record text into chat, commits, issues, or pull requests. Names without a label are not redacted. If a sentence still shows a name, stop and ask the user to remove it before anything is sent.
+
 Requires: a successful `cfr-fetch` session and `records-intake` extractions.
 
 Run [local-search](../local-search/SKILL.md) first for any extra evidence terms (diagnosis names, onset dates, nexus wording). Use only snippets the user approved; whole pages only with explicit user approval.

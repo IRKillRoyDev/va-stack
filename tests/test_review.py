@@ -193,14 +193,20 @@ def test_review_local_stored_and_logged(vault, monkeypatch):
     monkeypatch.setattr(socket, "socket", no_net)
     monkeypatch.setattr(socket, "create_connection", no_net)
     save_one(vault, rid, "No", TYPED, bot_id=BOT)
-    vault.save_file_feedback("Audiogram 2024", "Name on page 3", bot_id=BOT)
+    vault.save_file_feedback(
+        "Audiogram 2024", "Name on page 3", bot_id=BOT, record_id="rec-a"
+    )
+    vault.save_file_feedback(
+        "Second record note", "Other name", bot_id=BOT, record_id="rec-b"
+    )
     stored = vault.get_review(rid, bot_id=BOT)
     assert stored["answer"] == "no" and stored["text"] == TYPED
     assert stored["flag"] == rv.USER_UPDATED and stored["ts"]
-    assert vault.get_file_feedback(bot_id=BOT) == {
-        "missing": "Audiogram 2024",
-        "missed_pii": "Name on page 3",
-    }
+    saved_a = vault.get_file_feedback(bot_id=BOT, record_id="rec-a")
+    saved_b = vault.get_file_feedback(bot_id=BOT, record_id="rec-b")
+    assert saved_a["missing"] == "Audiogram 2024"
+    assert saved_a["missed_pii"] == "Name on page 3" and saved_a["ts"]
+    assert saved_b["missing"] == "Second record note"
     raw = vault._db_path.read_bytes()
     assert b"Audiogram" not in raw and b"aging" not in raw  # encrypted at rest
     log = vault.read_log()

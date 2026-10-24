@@ -214,6 +214,31 @@ def test_cli_search_after_consent(db, monkeypatch, capsys):
     assert "correct horse fake" not in json.dumps(out)
 
 
+def test_reingest_drops_pages_no_longer_in_the_folder(tmp_path):
+    folder = tmp_path / "recs"
+    folder.mkdir()
+    record = folder / "note.txt"
+    record.write_text(
+        "=== PAGE 1 ===\nAlpha tinnitus page.\n=== PAGE 2 ===\nBeta deleted page.\n"
+    )
+    db = tmp_path / "v.db"
+    rv.create_vault(db, pw(), kdf_params=FAST, insecure_test_kdf=True)
+    vault = rv.Vault.open(db, pw(), consented())
+    try:
+        assert vault.ingest_folder(folder, bot_id=BOT) == 2
+        record.write_text("=== PAGE 1 ===\nAlpha tinnitus page.\n")
+        assert vault.ingest_folder(folder, bot_id=BOT) == 1
+        rows = vault._conn.execute(
+            "SELECT page, text FROM records ORDER BY page"
+        ).fetchall()
+        assert [row[0] for row in rows] == [1]
+        assert "Beta" not in rows[0][1]
+        assert vault._conn.execute("SELECT count(*) FROM files").fetchone()[0] == 1
+        assert vault._conn.execute("SELECT count(*) FROM originals").fetchone()[0] == 1
+    finally:
+        vault.close()
+
+
 def test_cli_has_no_password_argument():
     help_text = rv.build_parser().format_help()
     assert "--password" not in help_text

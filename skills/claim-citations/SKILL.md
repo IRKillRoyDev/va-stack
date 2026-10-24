@@ -5,11 +5,15 @@ description: For each claimable condition from condition-map, build a table of c
 
 # claim-citations
 
+## PII gate
+
+Do not read record files, vault page text, PDF bytes, or `raw_sentence`. Read only sterilized sentences, stored diagnosis sentences, and Missing Diagnosis text the program already wrote. Do not paste record text into chat, commits, issues, or pull requests. Names without a label are not redacted. If a sentence still shows a name, stop and ask the user to remove it before anything is sent.
+
 ## Steps
 
 1. Take condition-map rows where at least the current diagnosis is `shown`.
 2. For each, write one row: `condition`, `basis`, `cfr` (list of `38 CFR §x.y` cites with eCFR as-of date), `dc`, `evidence` (list of `{file, page, quote}`), `gaps`.
-3. Re-verify every quote: open the cited file at the cited page and confirm the quote appears verbatim. If not, remove that evidence item.
+3. Re-verify every quote against a sterilized sentence the program already stored. Do not open the record file. If the quote is not in that packet, remove that evidence item.
 4. Re-verify every CFR cite exists in the fetched eCFR text.
 5. **Drop rule:** a row with zero valid CFR cites OR zero valid record cites is dropped and listed under "Dropped" with the reason.
 6. List remaining missing elements in `gaps` (e.g. "nexus opinion missing").

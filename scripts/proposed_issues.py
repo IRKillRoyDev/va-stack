@@ -45,6 +45,13 @@ _SPEC.loader.exec_module(records_vault)
 redact = records_vault.local_search.redact
 _ls = records_vault.local_search
 
+_SCHED = importlib.util.spec_from_file_location(
+    "schedule_catalog", Path(__file__).resolve().parent / "schedule_catalog.py"
+)
+schedule_catalog = importlib.util.module_from_spec(_SCHED)
+sys.modules.setdefault("schedule_catalog", schedule_catalog)
+_SCHED.loader.exec_module(schedule_catalog)
+
 INSUFFICIENT = "insufficient evidence to estimate"
 ESTIMATE_NOTICE = (
     "Unofficial estimate, not a VA decision. It is likely to differ after the "
@@ -139,12 +146,14 @@ def _whole_phrase(text: str, phrase: str) -> bool:
     return False
 
 
-def check_criteria(criteria: dict) -> list[str]:
-    """Return problems: any DC or band cite not a whole clause in the eCFR fixture.
+def check_criteria(criteria: dict, ecfr: dict | None = None) -> list[str]:
+    """Return problems: any DC or band cite not a whole clause of the eCFR text.
 
-    When to use: on the build path (build_report) and in tests.
+    When to use: on the build path (build_report) and in tests. Pass the
+    session's eCFR document; the pinned fixture is used when ecfr is omitted.
+    A model whose cite is not a whole clause of that text is refused.
     """
-    sections = load_ecfr()["sections"]
+    sections = (ecfr if ecfr is not None else load_ecfr())["sections"]
     problems = []
     for code, dc in criteria["dcs"].items():
         text = sections.get(dc.get("section"), {}).get("text", "")
@@ -170,6 +179,21 @@ def load_ecfr() -> dict:
     """
     check_manifest(ECFR_FIXTURE.name)
     return _json(ECFR_FIXTURE)
+
+
+def _ecfr_for(data: dict) -> dict:
+    """The pinned fixture, or a cfr-fetch file named in the input.
+
+    A supplied file must have sections and an as-of date. Its URLs are
+    still checked. The pinned fixture stays manifest-checked.
+    """
+    path = data.get("ecfr_file")
+    if not path:
+        return load_ecfr()
+    doc = _json(Path(path))
+    if not isinstance(doc.get("sections"), dict) or not doc.get("as_of"):
+        raise ValueError("ecfr_file must have sections and as_of")
+    return doc
 
 
 URL_HOSTS = {
@@ -275,23 +299,56 @@ def _step(table: dict, a: int, b: int) -> int:
     return _round_half_up(a + b * (100 - a) / 100)
 
 
-def combine(ratings: list[int], bilateral: list[int] | None = None) -> dict:
-    """Combine ratings per §4.25 (and §4.26 for one bilateral pair).
+def _as_pairs(bilateral: list | None) -> list[list[int]]:
+    """Normalize one pair or a list of pairs to a list of int lists.
+
+    A flat list of ints is one pair (`[10, 10]`). A list of lists is one
+    pair per item (`[[10, 10], [20, 20]]`).
+    """
+    if not bilateral:
+        return []
+    if all(isinstance(item, int) for item in bilateral):
+        return [list(bilateral)]
+    pairs = []
+    for item in bilateral:
+        if isinstance(item, int) or not all(isinstance(n, int) for n in item):
+            raise ValueError(
+                "bilateral_pairs must be a pair of ratings, such as" " [[10, 10]]"
+            )
+        if len(item) < 2:
+            raise ValueError("a bilateral pair needs two ratings")
+        pairs.append(list(item))
+    return pairs
+
+
+def combine(
+    ratings: list[int],
+    bilateral: list | None = None,
+) -> dict:
+    """Combine ratings per §4.25 (and §4.26 for each bilateral pair).
 
     When to use: for the combined estimate. Ratings are ordered highest
     first; each step is read from Table I and kept as a whole number; the
     final value is converted to the nearest 10, with 5 adjusted upward.
+    `bilateral` is one pair (`[10, 10]`) or several (`[[10, 10]]`). Each
+    pair is combined, 10 percent of that value is added, and the result
+    replaces the pair. The caller must not also leave those ratings in
+    `ratings`.
     """
     table = load_table()
-    out: dict = {"bilateral_value": None}
-    values = sorted(ratings, reverse=True)
-    if bilateral:
-        pair = sorted(bilateral, reverse=True)
-        value = pair[0]
-        for r in pair[1:]:
-            value = _step(table, value, r)
-        out["bilateral_value"] = _round_half_up(value * 1.1)
-        values = sorted(values + [out["bilateral_value"]], reverse=True)
+    pairs = _as_pairs(bilateral)
+    bilateral_values = []
+    for pair in pairs:
+        ordered = sorted(pair, reverse=True)
+        value = ordered[0]
+        for rating in ordered[1:]:
+            value = _step(table, value, rating)
+        bilateral_values.append(_round_half_up(value * 1.1))
+    out: dict = {
+        "bilateral_value": bilateral_values[0] if len(bilateral_values) == 1 else None,
+        "bilateral_values": bilateral_values,
+    }
+    values = sorted(list(ratings) + bilateral_values, reverse=True)
     if not values:
         return {**out, "order": [], "steps": [], "combined_value": 0, "final": 0}
     running = values[0]
@@ -730,8 +787,12 @@ NEGATION = re.compile(
     # round 12 additions
     r"|improbabl[ey]|less probable|dubious|non[- ]?service[- ]connected"
     r"|ruled[- ]out|r/o|w/o|non-?contributory|less than likely)\b|n't\b"
-    # any "N percent" / "N%" with N below 50 (0-49.99)
+    # a percentage under 50 only when it is a probability, not a
+    # measurement ("20 percent of the body", "FEV1 40%")
+    r"|(?:probability|chance|likelihood|probable)"
+    r".{0,40}?(?<![\d.])[0-4]?\d(?:\.\d+)?\s*(?:%|percent\b|per cent\b)"
     r"|(?<![\d.])[0-4]?\d(?:\.\d+)?\s*(?:%|percent\b|per cent\b)"
+    r"\s*(?:likely|probable|probability|chance|likelihood)\b"
     r"|\b(?:below|under|at most)(?:\s+\w+){0,2}\s+(?:50|fifty)\b"
     # any "less than ... 50" or "50 ... or less", in digits or words
     r"|\bless than(?:\s+\w+){0,2}\s+(?:50|fifty)\b"
@@ -740,27 +801,101 @@ NEGATION = re.compile(
 )
 
 
+def _finding_tokens(value) -> list[str]:
+    """Numbers and words a finding must show in a cited quote."""
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if number.is_integer():
+            return [str(int(number))]
+        return [str(value)]
+    raw = str(value).replace("_", " ")
+    skip = {
+        "with",
+        "from",
+        "that",
+        "this",
+        "under",
+        "over",
+        "without",
+        "other",
+        "than",
+        "into",
+        "more",
+        "only",
+    }
+    tokens = re.findall(r"\d+", raw)
+    tokens += [
+        word.lower()
+        for word in re.findall(r"[A-Za-z]{4,}", raw)
+        if word.lower() not in skip
+    ]
+    return tokens
+
+
+def _findings_in_quotes(findings: dict, quotes: str) -> tuple[dict, list[str]]:
+    """Keep findings whose values appear in the cited quotes.
+
+    A number must appear as its own number, so 20 does not match 2025.
+    Words of a category value must each appear. Findings that do not
+    appear are left out of the estimate.
+    """
+    kept: dict = {}
+    skipped: list[str] = []
+    for key, value in findings.items():
+        tokens = _finding_tokens(value)
+        ok = bool(tokens)
+        for token in tokens:
+            if token.isdigit() or re.fullmatch(r"\d+\.\d+", token):
+                if re.search(rf"(?<!\d){re.escape(token)}(?!\d)", quotes) is None:
+                    ok = False
+            elif token not in quotes.lower():
+                ok = False
+        if ok:
+            kept[key] = value
+        else:
+            skipped.append(str(key))
+    return kept, skipped
+
+
+def _without_pairs(ratings: list[int], pairs: list[list[int]]) -> list[int]:
+    """Remove each bilateral rating from the issue estimates, once per use.
+
+    Raises ValueError when a pair names a rating the issues did not produce,
+    which is what stops the pair from being added on top of itself.
+    """
+    remaining = list(ratings)
+    for pair in pairs:
+        for rating in pair:
+            try:
+                remaining.remove(rating)
+            except ValueError:
+                raise ValueError(
+                    f"bilateral rating {rating} is not one of the issue"
+                    f" estimates {ratings}"
+                ) from None
+    return remaining
+
+
 def build_report(data: dict, vault, bot_id: str) -> dict:
     """Build the cited report, the form-mapped list, and the combined estimate.
 
     When to use: main entry point; `vault` is an unlocked records_vault.Vault.
     """
     criteria = load_criteria()
-    ecfr = load_ecfr()
+    ecfr = _ecfr_for(data)
     problems = (
-        verify_forms() + check_criteria(criteria) + check_urls(ecfr, load_forms())
+        verify_forms() + check_criteria(criteria, ecfr) + check_urls(ecfr, load_forms())
     )
     if problems:
         raise ValueError("refusing to build: " + "; ".join(problems))
+    catalog = schedule_catalog.parse_schedule(ecfr)
     rows = []
     numeric = []
     for issue in data["issues"]:
         _check_date(issue.get("approx_date", ""))
         _check_decision_date(issue.get("decision_date", ""))
-        dc = criteria["dcs"].get(issue["dc"])
-        est = estimate(dc, issue.get("findings", {}))
-        level, hits = est["estimate"], est["hits"]
-        section = ecfr["sections"][dc["section"]] if dc else {}
         links = []
         for ev in issue["evidence"]:
             cite = cite_quote(vault, ev, bot_id)
@@ -778,6 +913,49 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                     "date": cite["date"],
                 }
             )
+        code = str(issue["dc"])
+        model = criteria["dcs"].get(code) or criteria["dcs"].get(issue["dc"])
+        entry = catalog.get(code)
+        quote_text = " ".join(ln["quote"] for ln in links)
+        shown, skipped = _findings_in_quotes(issue.get("findings") or {}, quote_text)
+        if model:
+            est = estimate(model, shown)
+            gap = gap_analysis(code, model, shown, est["estimate"])
+        elif (
+            entry
+            and entry["kind"] == "single"
+            and schedule_catalog.quote_shows_line(entry, quote_text)
+        ):
+            est = {
+                "estimate": entry["rating"],
+                "hits": [
+                    {
+                        "factor": "schedule_line",
+                        "level": entry["rating"],
+                        "cite": entry["cite"],
+                    }
+                ],
+                "notice": ESTIMATE_NOTICE,
+            }
+            gap = {
+                "at_max": True,
+                "text": "The fetched schedule states one rating on this line.",
+            }
+        else:
+            est = {"estimate": INSUFFICIENT, "hits": [], "notice": ESTIMATE_NOTICE}
+            gap = {
+                "at_max": False,
+                "next_level": None,
+                "factors": [],
+                "text": (
+                    schedule_catalog.no_estimate_reason(entry)
+                    if entry
+                    else "DC not found in the fetched schedule."
+                ),
+            }
+        level, hits = est["estimate"], est["hits"]
+        section_id = (model or {}).get("section") or (entry or {}).get("section")
+        section = ecfr["sections"].get(section_id, {}) if section_id else {}
         tool_flags = list(dict.fromkeys(f for ln in links for f in ln["flags"]))
         row_id = _row_id(len(rows) + 1, issue, links)
         pointers = [
@@ -817,35 +995,34 @@ def build_report(data: dict, vault, bot_id: str) -> dict:
                 "user_update": user_update,
                 "nexus": nexus,
                 "estimate": level,
+                "findings_not_in_quote": skipped,
                 "rating_wording": {
-                    "section": dc["section"] if dc else None,
-                    "dc": redact(issue["dc"])[0],
-                    "dc_cite": dc["dc_cite"] if dc else None,
+                    "section": section_id,
+                    "dc": redact(code)[0],
+                    "dc_cite": (
+                        model["dc_cite"] if model else (entry or {}).get("cite")
+                    ),
                     "quotes": [h["cite"] for h in hits],
+                    "schedule_text": (entry or {}).get("verbatim"),
+                    "formula_text": (entry or {}).get("formula"),
+                    "schedule_kind": (entry or {}).get("kind"),
                     "ecfr_url": section.get("url"),
                     "api_url": section.get("api_url"),
                     "as_of": ecfr["as_of"],
                 },
-                "gap": (
-                    gap_analysis(issue["dc"], dc, issue.get("findings", {}), level)
-                    if dc
-                    else {
-                        "at_max": False,
-                        "next_level": None,
-                        "factors": [],
-                        "text": "DC not modelled; no estimate.",
-                    }
-                ),
+                "gap": gap,
                 "notice": est["notice"],
             }
         )
     register = getattr(vault, "_register_report", None)
     if register is not None:
         register([r["row_id"] for r in rows])
-    combined = combine(numeric, data.get("bilateral_pairs") or None)
+    pairs = _as_pairs(data.get("bilateral_pairs") or None)
+    remaining = _without_pairs(numeric, pairs)
+    combined = combine(remaining, pairs or None)
     combined.update(
         {
-            "ratings": sorted(numeric, reverse=True),
+            "ratings": combined["order"],
             "formula": "combined = 1 - (1 - r1)(1 - r2)...(1 - rn), highest first; "
             "each step read from the §4.25 table as a whole number; final "
             "converted to the nearest 10 (5 adjusted upward)",
@@ -948,6 +1125,19 @@ def _sibling(name: str):
     return mod
 
 
+def _criteria_main(args) -> int:
+    """Unlock, then open the criteria review window."""
+    ui = _sibling("vault_ui")
+    vault = ui.unlock(args.db, args.bot_id)
+    if vault is None:
+        print("consent declined; vault stays locked", file=sys.stderr)
+        return 3
+    try:
+        return _sibling("criteria_ui").run(vault, args.bot_id)
+    finally:
+        vault.close()
+
+
 def _review_main(args) -> int:
     """Build the report from the vault and start the review.
 
@@ -977,6 +1167,36 @@ def _review_main(args) -> int:
         vault.close()
 
 
+def quotes_in_packet(data: dict, packet: dict) -> None:
+    """Raise ValueError unless every evidence quote is a sterilized sentence.
+
+    When to use: before saving a proposal. The bot may only quote sentences
+    the program already redacted and stored.
+    """
+    allowed = {" ".join(item["sentence"].split()) for item in packet["sentences"]}
+    for issue in data.get("issues") or []:
+        for ev in issue.get("evidence") or []:
+            quote = " ".join(redact(ev.get("quote") or "")[0].split())
+            if quote not in allowed:
+                raise ValueError("quote is not in the sterilized packet")
+
+
+def save_proposal(data: dict, vault, bot_id: str) -> dict:
+    """Build the estimate from the sterilized packet and store it.
+
+    When to use: after sterilize(). Refuses a quote the packet does not
+    contain. The report is written into the vault and returned.
+    """
+    packet = vault.latest_sterile(bot_id)
+    if not packet:
+        raise ValueError("sterilize the records before building a proposal")
+    quotes_in_packet(data, packet)
+    report = build_report(data, vault, bot_id)
+    report["sterile_id"] = packet["id"]
+    report["proposal_id"] = vault.save_proposal(report, packet["id"], bot_id)
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI: consent, unlock, then print the report JSON.
 
@@ -985,8 +1205,30 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description="Proposed issues + estimates.")
     parser.add_argument("db", type=Path)
-    parser.add_argument("input", type=Path)
+    parser.add_argument("input", nargs="?", type=Path)
     parser.add_argument("--bot-id", required=True)
+    parser.add_argument(
+        "--sterilize",
+        action="store_true",
+        help="redact matching sentences, store them, and print that packet",
+    )
+    parser.add_argument(
+        "-t",
+        "--term",
+        action="append",
+        default=[],
+        help="with --sterilize, a term to find (repeat for more)",
+    )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help="store the proposal in the vault; quotes must be sterilized sentences",
+    )
+    parser.add_argument(
+        "--criteria",
+        action="store_true",
+        help="open the confidence review with a page pane and highlight",
+    )
     parser.add_argument(
         "--review",
         action="store_true",
@@ -998,10 +1240,20 @@ def main(argv: list[str] | None = None) -> int:
         help="with --review: use the text walk-through even if a window can open",
     )
     args = parser.parse_args(argv)
+    if args.criteria and (args.sterilize or args.save or args.review or args.input):
+        parser.error("--criteria does not take an input file or another mode")
+    if args.sterilize and (args.save or args.review or args.input):
+        parser.error("--sterilize does not take an input file or --save/--review")
+    if args.sterilize and not args.term:
+        parser.error("--sterilize needs at least one -t term")
+    if not args.sterilize and not args.criteria and args.input is None:
+        parser.error("an input JSON file is required")
     problems = verify_forms()
     if problems:
         print("\n".join(problems), file=sys.stderr)
         return 6
+    if args.criteria:
+        return _criteria_main(args)
     if args.review:
         return _review_main(args)
     vault = records_vault._cli_unlock(args.db)
@@ -1009,7 +1261,19 @@ def main(argv: list[str] | None = None) -> int:
         print("consent declined; vault stays locked", file=sys.stderr)
         return 3
     try:
-        report = build_report(_json(args.input), vault, args.bot_id)
+        if args.sterilize:
+            packet = vault.sterilize(args.term, args.bot_id)
+            print(json.dumps(packet, indent=2))
+            return 0
+        data = _json(args.input)
+        report = (
+            save_proposal(data, vault, args.bot_id)
+            if args.save
+            else build_report(data, vault, args.bot_id)
+        )
+    except (ValueError, records_vault.VaultError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     finally:
         vault.close()
     print(_ls.redact_names(json.dumps(report, indent=2)))

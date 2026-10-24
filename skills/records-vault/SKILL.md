@@ -5,11 +5,15 @@ description: Keep the user's records in an encrypted database on their own compu
 
 # records-vault
 
+## PII gate
+
+Do not read record files, vault page text, PDF bytes, or `raw_sentence`. Read only sterilized sentences, stored diagnosis sentences, and Missing Diagnosis text the program already wrote. Do not paste record text into chat, commits, issues, or pull requests. Names without a label are not redacted. If a sentence still shows a name, stop and ask the user to remove it before anything is sent.
+
 Use this when the user wants records encrypted at rest between sessions. It wraps [local-search](../local-search/SKILL.md): searches run through the vault with the same redaction and caps.
 
 ## Steps
 
-1. The user installs the pinned packages on their computer: `pip install -r requirements.txt` (pypdf, sqlcipher3-binary, argon2-cffi).
+1. The user installs the pinned packages on their computer: `pip install -r requirements.txt` (pypdf, pymupdf, sqlcipher3-binary, argon2-cffi). PyMuPDF draws the PDF pane in the criteria review.
 2. Create the vault once: `python3 scripts/records_vault.py init "<db>"`. The password is typed at a local prompt, twice. It is never accepted as an argument or environment variable, and never printed or logged.
 3. Every session starts with the consent-to-share screen: the Unlock window (`python3 scripts/vault_ui.py "<db>" --bot-id <id>`) or the CLI. The password field is disabled until the user ticks consent. Consent is asked every session and never remembered. If the user declines, the vault stays locked (CLI exit code 3).
 4. Ingest: `python3 scripts/records_vault.py ingest "<db>" "<folder>" --bot-id <id>`.

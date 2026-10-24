@@ -9,7 +9,7 @@
    "approx_date": "06-2004",
    "dc": "7806",
    "findings": {"body_area_percent": 20, "treatment": "topical"},
-   "evidence": [{"file": "derm-fake.txt", "page": 1, "quote": "Exam: characteristic lesions on about 20 percent of the entire body; exposed areas not measured."}]
+   "evidence": [{"file": "derm-fake.txt", "page": 1, "quote": "Exam: characteristic lesions on about 20 percent of the entire body; exposed areas not measured."}, {"file": "derm-fake.txt", "page": 1, "quote": "Treatment over the past 12 months: topical cream only."}]
   },
   {
    "condition": "Tinnitus",

@@ -5,6 +5,10 @@ description: Search the user's local records folder on their own computer with s
 
 # local-search
 
+## PII gate
+
+Do not read record files, vault page text, PDF bytes, or `raw_sentence`. Read only sterilized sentences, stored diagnosis sentences, and Missing Diagnosis text the program already wrote. Do not paste record text into chat, commits, issues, or pull requests. Names without a label are not redacted. If a sentence still shows a name, stop and ask the user to remove it before anything is sent.
+
 Use this before records-intake and condition-map read any record text.
 
 If the user keeps records in the encrypted vault, run the same search through [records-vault](../records-vault/SKILL.md) instead; redaction and caps are the same.

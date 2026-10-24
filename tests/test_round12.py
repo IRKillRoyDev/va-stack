@@ -237,7 +237,7 @@ def test_untagged_quote_still_compared_raw(vault):
         "49 percent likely",
         "probability of 40%",
         "30% likely",
-        "0 percent",
+        "0 percent likely",
         "12.5 % chance",
         "improbably",
         "less probable",
@@ -257,3 +257,15 @@ def test_negation_round12(text):
 @pytest.mark.parametrize("text", ["50 percent", "60%", "75 percent likely"])
 def test_fifty_or_more_percent_not_flagged_by_number(text):
     assert not pi.NEGATION.search(pi.fold_for_negation(f"It is {text} here.")), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "about 20 percent of the entire body",
+        "FEV1 40%",
+        "lesions on 12 percent of exposed skin",
+    ],
+)
+def test_clinical_percent_is_not_a_negative_opinion(text):
+    assert not pi.NEGATION.search(pi.fold_for_negation(text)), text

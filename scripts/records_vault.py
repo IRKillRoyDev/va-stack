@@ -268,9 +268,53 @@ CREATE TABLE IF NOT EXISTS review (
     row_id TEXT PRIMARY KEY, answer TEXT NOT NULL, text TEXT, flag TEXT,
     ts TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS file_feedback (
-    id INTEGER PRIMARY KEY CHECK (id = 1), missing TEXT NOT NULL,
+    record_id TEXT PRIMARY KEY, missing TEXT NOT NULL,
     missed_pii TEXT NOT NULL, ts TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sterile (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
+    bot_id TEXT NOT NULL, packet TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS proposal (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
+    bot_id TEXT NOT NULL, sterile_id INTEGER NOT NULL,
+    report TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS originals (
+    file TEXT PRIMARY KEY, kind TEXT NOT NULL, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS sanitize_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, file TEXT NOT NULL,
+    page INTEGER NOT NULL, source TEXT NOT NULL, sanitized TEXT,
+    ts TEXT NOT NULL, status TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS diagnoses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, dc TEXT NOT NULL,
+    file TEXT NOT NULL, page INTEGER NOT NULL, sentence TEXT NOT NULL,
+    ts TEXT NOT NULL, UNIQUE (dc, file, page, sentence));
+CREATE TABLE IF NOT EXISTS missing_diagnosis (
+    dc TEXT PRIMARY KEY, finding_count INTEGER NOT NULL,
+    needed TEXT NOT NULL, ts TEXT NOT NULL);
 """
+
+
+def _migrate_file_feedback(conn) -> None:
+    """Move a one-row feedback table onto per-record ids.
+
+    When to use: at unlock, so a vault created before record ids still opens.
+    The old single row is kept under the record id "legacy".
+    """
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(file_feedback)")]
+    if not cols or "record_id" in cols:
+        return
+    conn.execute("ALTER TABLE file_feedback RENAME TO file_feedback_legacy")
+    conn.execute(
+        "CREATE TABLE file_feedback ("
+        "record_id TEXT PRIMARY KEY, missing TEXT NOT NULL,"
+        " missed_pii TEXT NOT NULL, ts TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO file_feedback (record_id, missing, missed_pii, ts)"
+        " SELECT 'legacy', missing, missed_pii, ts FROM file_feedback_legacy"
+    )
+    conn.execute("DROP TABLE file_feedback_legacy")
+
+
 # Flag on a row whose reading the user replaced with their own typed text.
 USER_UPDATED = "USER_UPDATED"
 REVIEW_ANSWERS = ("yes", "no")
@@ -488,6 +532,7 @@ class Vault:
             zeroize(key)
             raise VaultError("KDF header was changed or is unsigned; refusing to open")
         conn.executescript(SCHEMA)
+        _migrate_file_feedback(conn)
         return cls(conn, key, _new_token(), db_path, header)
 
     def _check_open(self) -> None:
@@ -541,28 +586,67 @@ class Vault:
             self._write_head(fields["seq"], mac)
 
     def ingest_folder(self, folder: Path, bot_id: str) -> int:
-        """Copy page text from a local folder into the encrypted vault.
+        """Make the vault match a local folder.
 
-        When to use: to add or refresh records. Returns pages stored.
+        When to use: to add or refresh records. Pages and files that are no
+        longer in the folder are deleted, so a shorter file cannot leave a
+        stale page that a later report could cite. Returns pages stored.
         """
         self._check_open()
         bot_id = self._bot(bot_id)
         count = 0
         files: dict[str, int] = {}
+        seen: set[tuple[str, int]] = set()
         for rel, page_no, text in local_search.iter_folder_pages(Path(folder)):
             self._conn.execute(
                 "INSERT OR REPLACE INTO records VALUES (?,?,?)", (rel, page_no, text)
             )
             files[rel] = files.get(rel, 0) + 1
+            seen.add((rel, page_no))
             count += 1
         for rel in files:
             self._conn.execute(
                 "INSERT OR IGNORE INTO files VALUES (?, ?)", (secrets.token_hex(8), rel)
             )
+        stale = [
+            (file, page)
+            for file, page in self._conn.execute("SELECT file, page FROM records")
+            if (file, page) not in seen
+        ]
+        for file, page in stale:
+            self._conn.execute(
+                "DELETE FROM records WHERE file = ? AND page = ?", (file, page)
+            )
+        if files:
+            marks = ",".join("?" for _ in files)
+            self._conn.execute(
+                f"DELETE FROM files WHERE file NOT IN ({marks})", tuple(files)
+            )
+        else:
+            self._conn.execute("DELETE FROM files")
+        folder = Path(folder)
+        present = []
+        for path in local_search.iter_record_files(folder):
+            rel = path.relative_to(folder).as_posix()
+            present.append(rel)
+            kind = "pdf" if path.suffix.lower() == local_search.PDF_SUFFIX else "text"
+            self._conn.execute(
+                "INSERT OR REPLACE INTO originals (file, kind, data) VALUES (?,?,?)",
+                (rel, kind, path.read_bytes()),
+            )
+        if present:
+            marks = ",".join("?" for _ in present)
+            self._conn.execute(
+                f"DELETE FROM originals WHERE file NOT IN ({marks})", tuple(present)
+            )
+        else:
+            self._conn.execute("DELETE FROM originals")
         for rel, pages in sorted(files.items()):
             self._log(
                 bot_id, "ingest", {"file": local_search.redact(rel)[0], "pages": pages}
             )
+        if stale:
+            self._log(bot_id, "ingest_removed", {"pages": len(stale)})
         return count
 
     def search(self, terms: list[str], bot_id: str, **caps) -> dict:
@@ -587,6 +671,333 @@ class Vault:
             },
         )
         return result
+
+    def sterilize(self, terms: list[str], bot_id: str, max_total: int = 100) -> dict:
+        """Redact every matching sentence and store that packet in the vault.
+
+        When to use: before a proposal. The packet is what the bot may read.
+        Raw record text is not included. The packet stays in the encrypted
+        file; the log stores a keyed HMAC and a count, not the sentences.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        clean = [
+            term.strip() for term in terms if isinstance(term, str) and term.strip()
+        ]
+        if not clean:
+            raise VaultError("sterilize needs at least one search term")
+        if max_total < 1:
+            raise VaultError("max_total must be 1 or more")
+        sentences: list[dict] = []
+        seen: set[tuple] = set()
+        counts: dict[str, int] = {}
+        truncated = False
+        pages = self._conn.execute(
+            "SELECT file, page, text FROM records ORDER BY file, page"
+        ).fetchall()
+        for raw_file, page_no, raw in pages:
+            page, page_counts = local_search.redact(raw)
+            for kind, count in page_counts.items():
+                counts[kind] = counts.get(kind, 0) + count
+            file_name = local_search.redact(raw_file)[0]
+            for unit in local_search.split_sentences(page):
+                flat = " ".join(unit.split())
+                if not flat or not any(term.lower() in flat.lower() for term in clean):
+                    continue
+                key = (file_name, page_no, flat)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if len(sentences) >= max_total:
+                    truncated = True
+                    continue
+                head = " ".join(flat.split()[:3])
+                line = 1
+                for number, row in enumerate(page.splitlines(), 1):
+                    if head in " ".join(row.split()):
+                        line = number
+                        break
+                sentences.append(
+                    {
+                        "file": file_name,
+                        "page": page_no,
+                        "line": line,
+                        "sentence": flat,
+                    }
+                )
+        packet = {
+            "terms": [local_search.redact(term)[0] for term in clean],
+            "sentences": sentences,
+            "truncated": truncated,
+            "redactions": counts,
+            "notice": (
+                "Redacted sentences only. Review them before they go to the"
+                " AI service. Redaction can miss a name that has no label."
+            ),
+        }
+        return self.save_packet(packet, bot_id, action="sterilized")
+
+    def save_packet(
+        self, packet: dict, bot_id: str, action: str = "sterile_saved"
+    ) -> dict:
+        """Store a redacted sentence packet and return it with its id.
+
+        When to use: from sterilize(), and when the user selects criteria
+        matches to process. The log stores a keyed HMAC, not the sentences.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        stored = {k: v for k, v in packet.items() if k not in {"id", "ts"}}
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        cur = self._conn.execute(
+            "INSERT INTO sterile (ts, bot_id, packet) VALUES (?,?,?)",
+            (ts, bot_id, json.dumps(stored)),
+        )
+        stored["id"] = cur.lastrowid
+        stored["ts"] = ts
+        self._log(
+            bot_id,
+            action,
+            {
+                "sterile_id": stored["id"],
+                "sentences": len(stored.get("sentences") or []),
+                "hmac": self._mac(json.dumps(stored, sort_keys=True)),
+            },
+        )
+        return stored
+
+    def enqueue_for_sanitization(self, items: list[dict], bot_id: str) -> int:
+        """Store selected text that is not clearly a diagnosis.
+
+        When to use: after the user selects those items. The source stays
+        in the encrypted vault. The log stores a count and a keyed HMAC,
+        not the text. Clear diagnoses are not queued.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        stored = []
+        for item in items:
+            source = item.get("raw_sentence") or item.get("sentence") or ""
+            source = " ".join(str(source).split())
+            if not source:
+                continue
+            self._conn.execute(
+                "INSERT INTO sanitize_queue"
+                " (file, page, source, sanitized, ts, status)"
+                " VALUES (?,?,?,?,?,?)",
+                (item["file"], int(item["page"]), source, None, ts, "queued"),
+            )
+            stored.append(source)
+        self._log(
+            bot_id,
+            "sanitize_queued",
+            {"count": len(stored), "hmac": self._mac("\n".join(stored))},
+        )
+        return len(stored)
+
+    def run_sanitization(self, bot_id: str) -> dict:
+        """Redact every queued sentence and store the sanitized packet.
+
+        When to use: immediately after enqueue_for_sanitization(). Rows
+        already sanitized are left as they are.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        rows = self._conn.execute(
+            "SELECT id, file, page, source FROM sanitize_queue"
+            " WHERE status = 'queued' ORDER BY id"
+        ).fetchall()
+        sentences = []
+        counts: dict[str, int] = {}
+        for row_id, file, page, source in rows:
+            clean, found = local_search.redact(source)
+            clean = " ".join(clean.split())
+            for kind, count in found.items():
+                counts[kind] = counts.get(kind, 0) + count
+            self._conn.execute(
+                "UPDATE sanitize_queue SET sanitized = ?, status = 'sanitized'"
+                " WHERE id = ?",
+                (clean, row_id),
+            )
+            sentences.append(
+                {
+                    "file": local_search.redact(file)[0],
+                    "page": page,
+                    "line": 1,
+                    "sentence": clean,
+                }
+            )
+        packet = {
+            "terms": ["sanitization"],
+            "sentences": sentences,
+            "truncated": False,
+            "redactions": counts,
+            "notice": (
+                "Sanitized because the selected text was not clearly a" " diagnosis."
+            ),
+        }
+        if not sentences:
+            return packet
+        return self.save_packet(packet, bot_id, action="sanitized")
+
+    def store_diagnoses(self, items: list[dict], bot_id: str) -> int:
+        """Save sentences that clearly state a diagnosis. Logged without text."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        added = 0
+        for item in items:
+            sentence = " ".join(str(item.get("sentence") or "").split())
+            if not sentence:
+                continue
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO diagnoses"
+                " (dc, file, page, sentence, ts) VALUES (?,?,?,?,?)",
+                (str(item["dc"]), item["file"], int(item["page"]), sentence, ts),
+            )
+            added += cur.rowcount
+        self._log(bot_id, "diagnoses_stored", {"count": added})
+        return added
+
+    def store_missing_diagnoses(self, items: list[dict], bot_id: str) -> int:
+        """Replace the Missing Diagnosis section for this scan."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self._conn.execute("DELETE FROM missing_diagnosis")
+        for item in items:
+            self._conn.execute(
+                "INSERT INTO missing_diagnosis"
+                " (dc, finding_count, needed, ts) VALUES (?,?,?,?)",
+                (str(item["dc"]), int(item["finding_count"]), item["needed"], ts),
+            )
+        self._log(bot_id, "missing_diagnosis_stored", {"count": len(items)})
+        return len(items)
+
+    def list_diagnoses(self, bot_id: str) -> list[dict]:
+        """Return stored clear diagnoses. Logged as a count."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        rows = self._conn.execute(
+            "SELECT dc, file, page, sentence FROM diagnoses ORDER BY dc, id"
+        ).fetchall()
+        self._log(bot_id, "diagnoses_read", {"count": len(rows)})
+        return [
+            {"dc": row[0], "file": row[1], "page": row[2], "sentence": row[3]}
+            for row in rows
+        ]
+
+    def list_missing_diagnoses(self, bot_id: str) -> list[dict]:
+        """Return the Missing Diagnosis section. Logged as a count."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        rows = self._conn.execute(
+            "SELECT dc, finding_count, needed FROM missing_diagnosis ORDER BY dc"
+        ).fetchall()
+        self._log(bot_id, "missing_diagnosis_read", {"count": len(rows)})
+        return [
+            {"dc": row[0], "finding_count": row[1], "needed": row[2]} for row in rows
+        ]
+
+    def record_pages(self, bot_id: str) -> list[dict]:
+        """Return file, page, and text for matching. Logged as a count only."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        rows = self._conn.execute(
+            "SELECT file, page, text FROM records ORDER BY file, page"
+        ).fetchall()
+        self._log(bot_id, "pages_listed", {"pages": len(rows)})
+        return [{"file": row[0], "page": row[1], "text": row[2]} for row in rows]
+
+    def get_original(self, file: str, bot_id: str):
+        """Return (kind, bytes) for one ingested file, or None. Logged."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        row = self._conn.execute(
+            "SELECT kind, data FROM originals WHERE file = ?", (file,)
+        ).fetchone()
+        self._log(
+            bot_id,
+            "original_opened",
+            {"file": local_search.redact(file)[0], "found": row is not None},
+        )
+        if row is None:
+            return None
+        return row[0], row[1]
+
+    def latest_sterile(self, bot_id: str) -> dict | None:
+        """Return the newest sterilized packet, or None. Logged."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        row = self._conn.execute(
+            "SELECT id, ts, packet FROM sterile ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self._log(
+            bot_id,
+            "sterile_read",
+            {"sterile_id": None if row is None else row[0]},
+        )
+        if row is None:
+            return None
+        packet = json.loads(row[2])
+        packet["id"] = row[0]
+        packet["ts"] = row[1]
+        return packet
+
+    def save_proposal(self, report: dict, sterile_id: int, bot_id: str) -> int:
+        """Store one estimated proposal built from a sterilized packet.
+
+        When to use: after the report is built. The report JSON stays in
+        the encrypted vault. The log stores a keyed HMAC, not the report.
+        """
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        body = json.dumps(report)
+        cur = self._conn.execute(
+            "INSERT INTO proposal (ts, bot_id, sterile_id, report) VALUES (?,?,?,?)",
+            (ts, bot_id, int(sterile_id), body),
+        )
+        self._log(
+            bot_id,
+            "proposal_saved",
+            {
+                "proposal_id": cur.lastrowid,
+                "sterile_id": int(sterile_id),
+                "hmac": self._mac(body),
+            },
+        )
+        return int(cur.lastrowid)
+
+    def get_proposal(self, bot_id: str, proposal_id: int | None = None) -> dict | None:
+        """Return a stored proposal, newest if no id is given. Logged."""
+        self._check_open()
+        bot_id = self._bot(bot_id)
+        if proposal_id is None:
+            row = self._conn.execute(
+                "SELECT id, ts, sterile_id, report FROM proposal ORDER BY id DESC"
+                " LIMIT 1"
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT id, ts, sterile_id, report FROM proposal WHERE id = ?",
+                (int(proposal_id),),
+            ).fetchone()
+        self._log(
+            bot_id,
+            "proposal_read",
+            {"proposal_id": None if row is None else row[0]},
+        )
+        if row is None:
+            return None
+        report = json.loads(row[3])
+        return {
+            "id": row[0],
+            "ts": row[1],
+            "sterile_id": row[2],
+            "report": report,
+        }
 
     def record_sent(self, hits: list[dict], bot_id: str) -> None:
         """Log each approved snippet sent to the AI service, by hash only.
@@ -745,31 +1156,62 @@ class Vault:
             return None
         return {"answer": row[0], "text": row[1], "flag": row[2], "ts": row[3]}
 
-    def save_file_feedback(self, missing: str, missed_pii: str, bot_id: str) -> None:
-        """Store what the user found missing and any PII redaction missed.
+    def save_file_feedback(
+        self, missing: str, missed_pii: str, bot_id: str, record_id: str
+    ) -> None:
+        """Store what the user found missing, for one record.
 
-        When to use: after the user reviews the whole file. The text is
-        redacted before it is stored; logged with a keyed HMAC only.
+        When to use: after the user reviews a record. Each record id keeps
+        its own row, so a later record does not erase an earlier one. The
+        text is redacted before it is stored; logged with a keyed HMAC only.
         """
         self._check_open()
         bot_id = self._bot(bot_id)
+        if not isinstance(record_id, str) or not record_id.strip():
+            raise VaultError("file feedback needs a record id")
+        record_id = record_id.strip()
         miss = local_search.redact(missing or "")[0]
         pii = local_search.redact(missed_pii or "")[0]
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self._conn.execute(
-            "INSERT OR REPLACE INTO file_feedback VALUES (1,?,?,?)", (miss, pii, ts)
+            "INSERT OR REPLACE INTO file_feedback VALUES (?,?,?,?)",
+            (record_id, miss, pii, ts),
         )
-        self._log(bot_id, "file_feedback_saved", {"hmac": self._mac(miss + "\n" + pii)})
+        self._log(
+            bot_id,
+            "file_feedback_saved",
+            {"record_id": record_id, "hmac": self._mac(miss + "\n" + pii)},
+        )
 
-    def get_file_feedback(self, bot_id: str) -> dict | None:
-        """Return the stored file-level feedback, or None. Logged."""
+    def get_file_feedback(self, bot_id: str, record_id: str | None = None):
+        """Return stored file feedback. Logged.
+
+        With a record id, one record's feedback or None. Without one, a
+        dict of record id to feedback, or None when nothing is stored.
+        """
         self._check_open()
         bot_id = self._bot(bot_id)
-        row = self._conn.execute(
-            "SELECT missing, missed_pii FROM file_feedback WHERE id = 1"
-        ).fetchone()
+        if record_id is not None:
+            row = self._conn.execute(
+                "SELECT missing, missed_pii, ts FROM file_feedback"
+                " WHERE record_id = ?",
+                (record_id,),
+            ).fetchone()
+            self._log(bot_id, "file_feedback_read", {"record_id": record_id})
+            if row is None:
+                return None
+            return {"missing": row[0], "missed_pii": row[1], "ts": row[2]}
+        rows = self._conn.execute(
+            "SELECT record_id, missing, missed_pii, ts FROM file_feedback"
+            " ORDER BY record_id"
+        ).fetchall()
         self._log(bot_id, "file_feedback_read", {})
-        return None if row is None else {"missing": row[0], "missed_pii": row[1]}
+        if not rows:
+            return None
+        return {
+            row[0]: {"missing": row[1], "missed_pii": row[2], "ts": row[3]}
+            for row in rows
+        }
 
     def _verify_citation(
         self, link: str, quote: str, expected: str, bot_id: str
