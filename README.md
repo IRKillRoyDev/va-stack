@@ -18,6 +18,21 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 | 6b | [proposed-issues](skills/proposed-issues/SKILL.md) | Full cited report plus a form-mapped proposed-issues list (verified VA form columns), unofficial estimates with gap analysis, and the §4.25 combined estimate |
 | 7 | [claim-submission](skills/claim-submission/SKILL.md) | Guide (never perform) the submission process after validating VA.gov, forms, and 38 CFR sources live |
 
+## App
+
+`./install` sets this up on the computer it is run on. `./uninstall` removes that setup. The installer creates a virtual environment, installs the pinned packages, and adds a `va-stack` command plus an application launcher (a desktop entry on Linux, `~/Applications/va-stack.app` on macOS).
+
+Apple Silicon and Intel Macs are different builds. An M-series Mac is arm64: `./install` runs Python with `arch -arm64` and refuses a Python that cannot start as arm64, so PyMuPDF and SQLCipher are the native wheels rather than Rosetta ones. Native Homebrew on Apple Silicon is `/opt/homebrew` (`brew install python@3.12 python-tk@3.12`). An Intel Mac uses an x86_64 Python, usually from `/usr/local`. Linux uses `python3`, and the window needs the `python3-tk` package.
+
+```
+./install
+va-stack
+va-stack doctor
+./uninstall
+```
+
+`va-stack` opens the window when a display is available: create or unlock a vault, open the criteria review, or search a folder. It also forwards to the scripts: `va-stack search`, `va-stack vault`, `va-stack unlock`, `va-stack criteria`, `va-stack issues`. From a checkout, `python3 scripts/app.py` is the same program. Not legal or medical advice. The macOS app is unsigned; if macOS blocks the first open, control-click `va-stack.app` and choose Open.
+
 ## Plugin
 
 `plugin.json` and `.cursor-plugin/plugin.json` describe the plugin (skills in `./skills/`, agents in `./agents/`). The [va-claims agent](agents/va-claims.md) runs the pipeline. More in [docs/README.md](docs/README.md).
@@ -41,6 +56,7 @@ Read [SAFETY.md](SAFETY.md) first. Not legal or medical advice.
 
 ```
 pip install -r requirements.txt
+va-stack search "/path/to/records" -t "tinnitus" -t "lumbar" --dry-run
 python3 scripts/local_search.py "/path/to/records" -t "tinnitus" -t "lumbar" --dry-run
 python3 scripts/local_search.py "/path/to/records" -t "tinnitus" --max-hits-per-term 20 --max-total 100 --context 80
 python3 scripts/local_search.py "/path/to/records" -t "separation" --keep-dates  # keep exact old dates
@@ -52,11 +68,11 @@ Runs on the user's own computer, makes no network calls, and writes nothing to d
 
 ```
 pip install -r requirements.txt
-python3 scripts/records_vault.py init records.db
-python3 scripts/records_vault.py ingest records.db "/path/to/records" --bot-id <id>
-python3 scripts/records_vault.py search records.db --bot-id <id> -t "tinnitus"
-python3 scripts/records_vault.py verify records.db --bot-id <id>
-python3 scripts/vault_ui.py records.db --bot-id <id>
+va-stack vault init records.db
+va-stack vault ingest records.db "/path/to/records" --bot-id <id>
+va-stack vault search records.db --bot-id <id> -t "tinnitus"
+va-stack vault verify records.db --bot-id <id>
+va-stack unlock records.db --bot-id <id>
 ```
 
-Each command shows the consent-to-share notice, then prompts for the password locally. `tests/test_vault.py` covers wrong password, tampered or deleted log entries, no consent, consent every session, missing bot id, no snippet text in the log, key zeroized after close, and no network use.
+From a checkout the same programs are `python3 scripts/records_vault.py` and `python3 scripts/vault_ui.py`. Each command shows the consent-to-share notice, then prompts for the password locally. `tests/test_vault.py` covers wrong password, tampered or deleted log entries, no consent, consent every session, missing bot id, no snippet text in the log, key zeroized after close, and no network use.

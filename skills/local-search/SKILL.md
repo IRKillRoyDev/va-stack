@@ -19,9 +19,10 @@ The bot's AI service processes any text the bot reads. This skill keeps that to 
 
 ## Steps
 
-1. Ask the user to install the pinned dependency once on their computer: `pip install -r requirements.txt`.
+1. Ask the user to install once on their computer with `./install` from this repository (the va-stack command, the application launcher, and the pinned packages). From a checkout, `pip install -r requirements.txt` still installs the packages. On an Apple Silicon Mac the installer uses the arm64 build.
 2. Ask the user to run, on their computer, a dry run with the search terms the next skill needs (diagnoses, symptoms, dates, "at least as likely as not", unit or location names):
-   `python3 scripts/local_search.py "<folder>" -t "<term>" -t "<term>" --dry-run`
+   `va-stack search "<folder>" -t "<term>" -t "<term>" --dry-run`
+   (`python3 scripts/local_search.py` is the same program from a checkout.)
    It prints counts only (files searched, matches per term, hits per file). No record text.
 3. Show the counts. Agree on terms and caps (`--max-hits-per-term`, default 20; `--max-total`, default 100; `--context`, default 80 characters each side).
 4. Ask the user to run the same command without `--dry-run`. Output is JSON: `file`, `page`, `line`, `term`, `context`. Before printing, pattern-based redaction replaces these with `[REDACTED-<KIND>]` (labels such as `DOB:` are kept): SSNs; any date that starts within about 25 characters after a birth label (DOB, D.O.B., D-O-B, birth, birthday, birth date, born, or "b." right before a date), in every mode; emails; street addresses, PO boxes and rural routes; state + ZIP after a city or street; VA file numbers; DoD ID numbers; and phones that are labeled (tel, phone, ph, call, cell, mobile, fax) or written as a full 10-digit number with separators. Each whole page is redacted before it is searched, and search terms and file names in the output are redacted too. Full dates 17 or more years old are shown as `[DATE-YYYY]`; `--keep-dates` turns only that off.

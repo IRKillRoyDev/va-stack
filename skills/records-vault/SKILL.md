@@ -13,9 +13,9 @@ Use this when the user wants records encrypted at rest between sessions. It wrap
 
 ## Steps
 
-1. The user installs the pinned packages on their computer: `pip install -r requirements.txt` (pypdf, pymupdf, sqlcipher3-binary, argon2-cffi). PyMuPDF draws the PDF pane in the criteria review.
-2. Create the vault once: `python3 scripts/records_vault.py init "<db>"`. The password is typed at a local prompt, twice. It is never accepted as an argument or environment variable, and never printed or logged.
-3. Every session starts with the consent-to-share screen: the Unlock window (`python3 scripts/vault_ui.py "<db>" --bot-id <id>`) or the CLI. The password field is disabled until the user ticks consent. Consent is asked every session and never remembered. If the user declines, the vault stays locked (CLI exit code 3).
+1. The user installs once on their computer with `./install` (the va-stack command, the application launcher, and the pinned packages: pypdf, pymupdf, sqlcipher3-binary, argon2-cffi). PyMuPDF draws the PDF pane in the criteria review. On an Apple Silicon Mac the installer uses the arm64 build. From a checkout, `pip install -r requirements.txt` still installs the packages.
+2. Create the vault once: `va-stack vault init "<db>"` (or `python3 scripts/records_vault.py init "<db>"`). The password is typed at a local prompt, twice. It is never accepted as an argument or environment variable, and never printed or logged.
+3. Every session starts with the consent-to-share screen: the Unlock window (`va-stack unlock "<db>" --bot-id <id>`, or `python3 scripts/vault_ui.py`) or the CLI. The password field is disabled until the user ticks consent. Consent is asked every session and never remembered. If the user declines, the vault stays locked (CLI exit code 3).
 4. Ingest: `python3 scripts/records_vault.py ingest "<db>" "<folder>" --bot-id <id>`.
 5. Search: `python3 scripts/records_vault.py search "<db>" --bot-id <id> -t "<term>"`. Output is the same redacted JSON as local-search. The user approves the snippet list before anything goes to the AI service.
 6. Log each approved snippet with `Vault.record_sent()` (file, page, line, keyed HMAC-SHA256 of the text, no text). Use `Vault.approve_page()` for a whole page, and only after the user explicitly approves that page.

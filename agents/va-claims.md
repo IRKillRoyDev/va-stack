@@ -15,7 +15,7 @@ Do not read record files, vault page text, PDF bytes, or `raw_sentence`. Read on
 
 1. **Track question:** [claim-submission](../skills/claim-submission/SKILL.md) Step 0 only. Ask: A1 active duty (pre-discharge, BDD), A2 active duty medical separation or retirement (IDES), B1 veteran never filed, B2 veteran already filed (increase, new condition, Supplemental Claim, Higher-Level Review, Board Appeal; Board steps cite 38 CFR Part 20), or C survivor/dependent (DIC, survivors pension, accrued benefits).
 2. [cfr-fetch](../skills/cfr-fetch/SKILL.md): current 38 CFR Parts 3, 4, 14 and 20 from eCFR, with an as-of date. Stop if it fails.
-3. [local-search](../skills/local-search/SKILL.md) or [records-vault](../skills/records-vault/SKILL.md): the user runs the program on their own computer. Read only the sterilized sentences it prints. Whole pages only with explicit approval. Pass this agent's bot id on every vault request.
+3. [local-search](../skills/local-search/SKILL.md) or [records-vault](../skills/records-vault/SKILL.md): the user runs the installed va-stack app, or the scripts from a checkout, on their own computer. Read only the sterilized sentences it prints. Whole pages only with explicit approval. Pass this agent's bot id on every vault request.
 4. [records-intake](../skills/records-intake/SKILL.md): work from those sterilized sentences. The record files stay in the folder the user named.
 5. [condition-map](../skills/condition-map/SKILL.md): DC and Part 3 basis; shown vs missing.
 6. [claim-citations](../skills/claim-citations/SKILL.md): cited claim table; drop rows lacking a CFR cite and a record cite.
