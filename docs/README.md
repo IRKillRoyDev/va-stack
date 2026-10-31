@@ -2,6 +2,10 @@
 
 Not legal or medical advice. See [SAFETY.md](../SAFETY.md).
 
+## Install
+
+From this repository, `./install` adds the `va-stack` command and an application launcher for the computer it is run on. `./uninstall` removes them. Apple Silicon Macs get the arm64 build (`arch -arm64`, Homebrew under `/opt/homebrew`). Intel Macs get the x86_64 build. `va-stack doctor` prints which one is running. The window needs tkinter.
+
 ## Pipeline
 
 The [va-claims agent](../agents/va-claims.md) runs:

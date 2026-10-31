@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Remove the va-stack command, the application launcher, and the install prefix.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+PREFIX="${VA_STACK_PREFIX:-$HOME/.local/share/va-stack}"
+
+usage() {
+  cat <<'EOF'
+Usage: ./uninstall [--prefix DIR]
+
+Removes the va-stack command, the application launcher, and the install
+prefix. Your vault files are not in that prefix and are left where you
+saved them. After the repository itself is gone, run the uninstall
+script that ./install wrote inside the prefix.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix)
+      PREFIX="${2:?}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ ! -f "$PREFIX/install.json" ]]; then
+  echo "No va-stack install at $PREFIX" >&2
+  exit 1
+fi
+
+python3 "$ROOT/scripts/install_layout.py" remove --prefix "$PREFIX"
+echo "Removed va-stack."

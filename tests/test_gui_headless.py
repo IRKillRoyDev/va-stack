@@ -245,3 +245,16 @@ def test_review_with_keyboard_events(db):
     saved = v._conn.execute("SELECT count(*) FROM review").fetchone()[0]
     v.close()
     assert saved == len(INPUT["issues"])
+
+
+def test_app_window_shows_disclaimer_and_closes():
+    app = _load("app")
+
+    def ready(root):
+        labels = [w.cget("text") for w in widgets(root, tk.Label)]
+        assert root.title() == "va-stack"
+        assert any("Not legal or medical advice" in text for text in labels)
+        assert any("Linux" in text for text in labels)
+        root.destroy()
+
+    assert app.run_window(on_ready=ready) == 0
